@@ -5,4 +5,4 @@ nora.db
 samples
 __pycache__
 *.pyc
-congig
+engine/config.py
