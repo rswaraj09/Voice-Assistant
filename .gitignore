@@ -1,8 +1,9 @@
 .venv
 contacts.csv
 nora.db
+engine/config.py
 .vscode
 samples
 __pycache__
 *.pyc
-engine/config.py
+

@@ -51,6 +51,8 @@ $(document).ready(function () {
     }
 
     
+    // face authentication UI functions disabled
+    /*
     // Hide Loader and display Face Auth animation
     eel.expose(hideLoader)
     function hideLoader() {
@@ -75,6 +77,7 @@ $(document).ready(function () {
         $("#HelloGreet").attr("hidden", false);
 
     }
+    */
 
 
     // Hide Start Page and display blob
