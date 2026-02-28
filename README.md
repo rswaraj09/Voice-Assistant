@@ -285,3 +285,8 @@ For issues, feature requests, or contributions, please follow standard Git pract
 - Some features require active internet connection
 - GPU acceleration is optional but recommended for better performance
 - Face authentication can be enabled/disabled as needed
+
+
+
+
+Developed By: M.R.C.P
