@@ -7,9 +7,9 @@ cursor = con.cursor()
 # query = "CREATE TABLE IF NOT EXISTS sys_command(id integer primary key, name VARCHAR(100), path VARCHAR(1000))"
 # cursor.execute(query)
 
-query = "INSERT INTO sys_command VALUES (null,'WhatsApp', 'C:\\Program Files\\WindowsApps\\5319275A.WhatsAppDesktop_2.2605.103.0_x64__cv1g1gvanyjgm\\WhatsApp.Root.exe')"
-cursor.execute(query)
-con.commit()
+# query = "INSERT INTO sys_command VALUES (null,'WhatsApp', 'C:\\Prograthem Files\\WindowsApps\\5319275A.WhatsAppDesktop_2.2605.103.0_x64__cv1g1gvanyjgm\\WhatsApp.Root.exe')"
+# cursor.execute(query)
+# con.commit()
 
 
 # cursor.execute("DELETE FROM sys_command WHERE id IN (?, ?)", (3, 4))
@@ -19,9 +19,9 @@ con.commit()
 # query = "CREATE TABLE IF NOT EXISTS web_command(id integer primary key, name VARCHAR(100), url VARCHAR(1000))"
 # cursor.execute(query)
 
-# query = "INSERT INTO web_command VALUES (null,'youtube', 'https://www.youtube.com/')"
-# cursor.execute(query)
-# con.commit()
+query = "INSERT INTO web_command VALUES (null,'gmail', 'https://mail.google.com/mail/u/0/#inbox')"
+cursor.execute(query)
+con.commit()
 
 
 # # testing module

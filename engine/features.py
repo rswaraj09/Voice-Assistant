@@ -116,8 +116,17 @@ def hotword():
 # find contacts
 def findContact(query):
     
-    words_to_remove = [ASSISTANT_NAME, 'make', 'a', 'to', 'phone', 'call', 'send', 'message', 'wahtsapp', 'video']
-    query = remove_words(query, words_to_remove)
+    # First try to extract the name using regex if the user specified "to [name]"
+    # This prevents the message itself (e.g. "hii") from being part of the name
+    import re
+    match = re.search(r'to\s+([a-zA-Z\s]+?)(?:\s+on|\s*$)', query, re.IGNORECASE)
+    
+    if match:
+        query = match.group(1).strip()
+    else:
+        # Fallback to the old word removal method
+        words_to_remove = [ASSISTANT_NAME, 'make', 'a', 'to', 'phone', 'call', 'send', 'message', 'wahtsapp', 'whatsapp', 'video', 'msg', 'on']
+        query = remove_words(query, words_to_remove)
 
     try:
         query = query.strip().lower()
@@ -134,45 +143,377 @@ def findContact(query):
         speak('not exist in contacts')
         return 0, 0
     
-def whatsApp(mobile_no, message, flag, name):
+def _get_call_button_coordinates():
+    """
+    Get the appropriate Voice/Video call button coordinates based on screen resolution.
     
+    Returns:
+        tuple: (voice_x, voice_y, video_x, video_y)
+    """
+    screen_width, screen_height = pyautogui.size()
+    
+    # Adjust coordinates based on screen resolution
+    # These are approximate positions for typical WhatsApp Desktop layouts
+    
+    if screen_width >= 1920:  # 1920x1080 or higher
+        return 1047, 151, 1195, 151
+    elif screen_width >= 1366:  # 1366x768
+        return 745, 90, 850, 90
+    else:  # Lower resolutions
+        return 700, 85, 800, 85
 
-    if flag == 'message':
-        target_tab = 12
-        jarvis_message = "message send successfully to "+name
 
-    elif flag == 'call':
-        target_tab = 7
-        message = ''
-        jarvis_message = "calling to "+name
+def _click_button_with_retry(x, y, max_retries=3, wait_time=0.5):
+    """
+    Click a button with retry logic.
+    
+    Args:
+        x, y: Screen coordinates
+        max_retries: Number of retry attempts
+        wait_time: Wait time between retries
+    
+    Returns:
+        bool: True if click successful, False otherwise
+    """
+    for attempt in range(max_retries):
+        try:
+            # move to the location first for visibility/debug
+            try:
+                pyautogui.moveTo(x, y, duration=0.2)
+                # print pixel color under mouse
+                img = pyautogui.screenshot()
+                color = img.getpixel((x, y))
+                print(f"  [DEBUG] moved to ({x},{y}), pixel color {color}")
+            except Exception:
+                pass
+            pyautogui.click(x, y)
+            time.sleep(wait_time)
+            return True
+        except Exception as e:
+            print(f"Click attempt {attempt + 1} failed: {e}")
+            time.sleep(0.5)
+    return False
 
+
+def _find_and_click_button(button_image_path, confidence=0.7):
+    """
+    Find a button on screen using image detection and click it.
+    
+    Args:
+        button_image_path: Path to button image
+        confidence: Confidence threshold (0-1)
+    
+    Returns:
+        bool: True if button found and clicked, False otherwise
+    """
+    try:
+        # Try to find the button
+        location = pyautogui.locateCenterOnScreen(button_image_path, confidence=confidence)
+        
+        if location:
+            print(f"Button found at {location}")
+            return _click_button_with_retry(location[0], location[1])
+        else:
+            print(f"Button not found: {button_image_path}")
+            return False
+    except Exception as e:
+        print(f"Error finding button: {e}")
+        return False
+
+
+def _navigate_whatsapp_menu(option='call'):
+    """
+    Navigate WhatsApp menu using arrow keys (more reliable than TAB).
+    
+    Args:
+        option: 'call' for voice call, 'video' for video call
+    
+    Returns:
+        bool: True if navigation successful
+    """
+    try:
+        time.sleep(0.5)
+        
+        # Press down arrow to navigate menu
+        if option == 'video':
+            pyautogui.press('down')
+            time.sleep(0.3)
+        
+        pyautogui.press('enter')
+        time.sleep(1)
+        return True
+    except Exception as e:
+        print(f"Menu navigation error: {e}")
+        return False
+
+
+def _is_green(color, tolerance=80):
+    """Return True if the RGB tuple is bright WhatsApp green (not cyan/teal)."""
+    if not color or len(color) < 3:
+        return False
+    r, g, b = color[:3]
+    # WhatsApp green is bright green: g should be very high (150+)
+    # and significantly higher than both r and b
+    # Exclude cyan/teal by requiring r to be low
+    return g > 150 and g > r and g > b and (g - r) > 50 and (g - b) > 20
+
+
+def _search_for_green_button(region=None):
+    """Scan a screen region for a bright green pixel (WhatsApp button) and return its coords.
+
+    Region tuple: (x1,y1,x2,y2). Defaults to top-right quarter of screen.
+    Searches for the BRIGHTEST green to avoid cyan/teal confusion.
+    """
+    screen = pyautogui.screenshot()
+    width, height = screen.size
+    if region is None:
+        x1 = int(width * 0.6)
+        y1 = 0
+        x2 = width
+        y2 = int(height * 0.3)
     else:
-        target_tab = 6
-        message = ''
-        jarvis_message = "staring video call with "+name
-
-
-    # Encode the message for URL
-    encoded_message = quote(message)
-    print(encoded_message)
-    # Construct the URL
-    whatsapp_url = f"whatsapp://send?phone={mobile_no}&text={encoded_message}"
-
-    # Construct the full command
-    full_command = f'start "" "{whatsapp_url}"'
-
-    # Open WhatsApp with the constructed URL using cmd.exe
-    subprocess.run(full_command, shell=True)
-    time.sleep(5)
-    subprocess.run(full_command, shell=True)
+        x1, y1, x2, y2 = region
+    print(f"    [Color-Search] scanning region {x1},{y1}-{x2},{y2} for bright green")
     
-    pyautogui.hotkey('ctrl', 'f')
+    best_match = None
+    best_green_value = 0
+    
+    for y in range(y1, y2, 3):
+        for x in range(x1, x2, 3):
+            col = screen.getpixel((x, y))
+            if _is_green(col):
+                r, g, b = col[:3]
+                # prefer brighter greens (higher g value = button more likely)
+                if g > best_green_value:
+                    best_green_value = g
+                    best_match = (x, y)
+                    print(f"    [Color-Search] found stronger green at {x},{y} color {col}")
+    
+    if best_match:
+        print(f"    [Color-Search] selected best match {best_match} with green value {best_green_value}")
+        return best_match
+    print("    [Color-Search] no bright green pixel found")
+    return None
 
-    for i in range(1, target_tab):
-        pyautogui.hotkey('tab')
 
-    pyautogui.hotkey('enter')
-    speak(jarvis_message)
+
+def whatsApp(mobile_no, message, flag, name):
+    """
+    Initiate WhatsApp call using production-grade method.
+    
+    This function opens WhatsApp and initiates a call/video call using:
+    1. Direct coordinate clicking (most reliable for WhatsApp Desktop)
+    2. Image detection fallback (adaptive to UI changes)
+    3. Arrow key navigation fallback (keyboard-based menu navigation)
+    
+    IMPORTANT: Run your voice assistant as Administrator for best results!
+    
+    Args:
+        mobile_no: Phone number with country code (e.g., +91XXXXXXXXXX)
+        message: Message text (used for message flag only)
+        flag: 'message', 'call', or 'video call'
+        name: Contact name for status messages
+    """
+    
+    print(f"\n[WhatsApp Function Called]")
+    print(f"  Mobile: {mobile_no}")
+    print(f"  Message: {message}")
+    print(f"  Flag: {flag}")
+    print(f"  Name: {name}")
+    
+    jarvis_message = ""
+    
+    # Encode the message for URL
+    encoded_message = quote(message) if message else ""
+    print(f"  Encoded message: {encoded_message}")
+    
+    # Construct the WhatsApp URL
+    # ensure no spaces in phone number
+    clean_no = mobile_no.replace(" ", "")
+    whatsapp_url = f"whatsapp://send?phone={clean_no}&text={encoded_message}"
+    full_command = f'start "" "{whatsapp_url}"'
+    
+    print(f"  WhatsApp URL: {whatsapp_url}")
+    print(f"  Full Command: {full_command}")
+    
+    try:
+        # Open WhatsApp with the constructed URL
+        print(f"[Step 1] Opening WhatsApp for: {name}")
+        subprocess.run(full_command, shell=True)
+        print(f"[Step 2] Waiting 5 seconds for WhatsApp to load...")
+        time.sleep(5)  # Wait for WhatsApp to load and chat to open
+        
+        # Ensure WhatsApp window is active/focused
+        try:
+            windows = pyautogui.getWindowsWithTitle('WhatsApp')
+            if windows:
+                print("[Step 2a] Activating WhatsApp window")
+                windows[0].activate()
+                time.sleep(0.5)
+            else:
+                print("[Step 2a] Could not find WhatsApp window to activate")
+        except Exception as wf_err:
+            print(f"[Step 2a] Window focus error: {wf_err}")
+        
+        if flag == 'message':
+            # For messages, press enter to send
+            time.sleep(2)  # Give it a tiny bit extra time just in case
+            pyautogui.press('enter')
+            
+            jarvis_message = "message send successfully to " + name
+            print(f"[Step 3] Message mode - Speaking: {jarvis_message}")
+            speak(jarvis_message)
+            print(f"[Complete] Message sent")
+            return
+        
+        # Get button coordinates based on screen resolution
+        voice_x, voice_y, video_x, video_y = _get_call_button_coordinates()
+        print(f"[Step 3] Button Coordinates - Voice: ({voice_x}, {voice_y}), Video: ({video_x}, {video_y})")
+        
+        if flag == 'call':
+            jarvis_message = "calling to " + name
+            print(f"[Step 4] Voice Call Mode")
+            print(f"  Attempting voice call to {name}")
+            
+            # Method 1: Sequential Image Scanning (PRIMARY)
+            print(f"  [Method 1] Scanning for call icon...")
+            call_icon_found = _find_and_click_button(
+                "templates/assets/images/call_icon.png", 
+                confidence=0.7
+            )
+            if call_icon_found:
+                print("  Call icon clicked. Scanning for voice call icon...")
+                time.sleep(1) # wait for dropdown to animate
+                voice_icon_found = _find_and_click_button(
+                    "templates/assets/images/voice_call_icon.png", 
+                    confidence=0.7
+                )
+                if voice_icon_found:
+                    print(f"  [Method 1] SUCCESS - Voice call initiated via sequential image scanning")
+                    speak(jarvis_message)
+                    print(f"[Complete] Voice call to {name}")
+                    return
+                else:
+                    print("  [FAILED] Voice call icon not found after clicking call icon")
+            else:
+                print("  [FAILED] Call icon not found")
+            
+            # Method 2: Direct coordinate click (FALLBACK)
+            print(f"  [Method 2] Trying direct coordinate click at ({voice_x}, {voice_y})...")
+            if _click_button_with_retry(voice_x, voice_y):
+                # wait for popup
+                time.sleep(0.5)
+                # try image detection if asset exists
+                try:
+                    loc = pyautogui.locateCenterOnScreen("templates/assets/images/voice_call_icon.png", confidence=0.7)
+                except Exception as img_err:
+                    print(f"    [Popup] image detection error: {img_err}")
+                    loc = None
+                if loc:
+                    print(f"    [Popup] found voice call icon at {loc}")
+                    _click_button_with_retry(loc[0], loc[1])
+                    speak(jarvis_message)
+                    print(f"[Complete] Voice call to {name}")
+                    return
+                else:
+                    print("    [Popup] voice call icon not found via image, scanning colors")
+                    found = _search_for_green_button()
+                    if found:
+                        print(f"    [Popup] found green pixel at {found}")
+                        _click_button_with_retry(found[0], found[1])
+                        speak(jarvis_message)
+                        print(f"[Complete] Voice call to {name}")
+                        return
+                    
+            # Method 3: Arrow key navigation (FALLBACK)
+            print(f"  [Method 3] Trying arrow key navigation...")
+            if _navigate_whatsapp_menu(option='call'):
+                print(f"  [Method 3] SUCCESS - Voice call initiated via menu navigation")
+                speak(jarvis_message)
+                print(f"[Complete] Voice call to {name}")
+                return
+            
+            # All methods failed
+            print(f"  [FAILED] Could not initiate voice call")
+            speak(f"Could not initiate call with {name}")
+            print(f"[Complete] Voice call failed")
+        
+        elif flag == 'video call':
+            jarvis_message = "starting video call with " + name
+            print(f"[Step 4] Video Call Mode")
+            print(f"  Attempting video call to {name}")
+            
+            # Method 1: Direct coordinate click (PRIMARY - most reliable)
+            print(f"  [Method 1] Clicking initial icon at ({video_x}, {video_y})")
+            screen = pyautogui.screenshot()
+            try:
+                current_color = screen.getpixel((video_x, video_y))
+            except Exception:
+                current_color = None
+            print(f"    pixel color at initial target: {current_color}")
+            if current_color and _is_green(current_color):
+                if _click_button_with_retry(video_x, video_y):
+                    print(f"  [Method 1] SUCCESS - Video call initiated via direct click")
+                    speak(jarvis_message)
+                    print(f"[Complete] Video call to {name}")
+                    return
+            else:
+                print("    not green, clicking to open popup")
+                if _click_button_with_retry(video_x, video_y):
+                    time.sleep(0.5)
+                    try:
+                        loc = pyautogui.locateCenterOnScreen("templates/assets/images/video_button.png", confidence=0.7)
+                    except Exception as img_err:
+                        print(f"    [Popup] image detection error: {img_err}")
+                        loc = None
+                    if loc:
+                        print(f"    [Popup] found green video button at {loc}")
+                        _click_button_with_retry(loc[0], loc[1])
+                        speak(jarvis_message)
+                        print(f"[Complete] Video call to {name}")
+                        return
+                    else:
+                        print("    [Popup] green video button not found via image, scanning colors")
+                        found = _search_for_green_button()
+                        if found:
+                            print(f"    [Popup] found green pixel at {found}")
+                            _click_button_with_retry(found[0], found[1])
+                            speak(jarvis_message)
+                            print(f"[Complete] Video call to {name}")
+                            return
+                print("    [Method1] initial icon click did not start call")
+            
+            # Method 2: Image detection (FALLBACK - adaptive)
+            print(f"  [Method 2] Trying image detection...")
+            video_button_found = _find_and_click_button(
+                "templates/assets/images/video_button.png", 
+                confidence=0.7
+            )
+            if video_button_found:
+                print(f"  [Method 2] SUCCESS - Video call initiated via image detection")
+                speak(jarvis_message)
+                print(f"[Complete] Video call to {name}")
+                return
+            
+            # Method 3: Arrow key navigation (FALLBACK - keyboard-based)
+            print(f"  [Method 3] Trying arrow key navigation...")
+            if _navigate_whatsapp_menu(option='video'):
+                print(f"  [Method 3] SUCCESS - Video call initiated via menu navigation")
+                speak(jarvis_message)
+                print(f"[Complete] Video call to {name}")
+                return
+            
+            # All methods failed
+            print(f"  [FAILED] Could not initiate video call")
+            print(f"  Check button coordinates or ensure WhatsApp is visible")
+            speak(f"Could not initiate video call with {name}")
+            print(f"[Complete] Video call failed")
+        
+    except Exception as e:
+        print(f"[ERROR] Exception in WhatsApp function: {e}")
+        import traceback
+        traceback.print_exc()
+        speak(f"Error initiating {flag} with {name}")
 
 # chat bot 
 def chatBot(query):
