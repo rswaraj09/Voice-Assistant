@@ -19,9 +19,9 @@ cursor = con.cursor()
 # query = "CREATE TABLE IF NOT EXISTS web_command(id integer primary key, name VARCHAR(100), url VARCHAR(1000))"
 # cursor.execute(query)
 
-query = "INSERT INTO web_command VALUES (null,'gmail', 'https://mail.google.com/mail/u/0/#inbox')"
-cursor.execute(query)
-con.commit()
+# query = "INSERT INTO web_command VALUES (null,'gmail', 'https://mail.google.com/mail/u/0/#inbox')"
+# cursor.execute(query)
+# con.commit()
 
 
 # # testing module
@@ -68,6 +68,16 @@ con.commit()
 
 # # Add Column in contacts table
 # cursor.execute("ALTER TABLE contacts ADD COLUMN address VARCHAR(255)")
+
+
+# cursor.execute("SELECT COUNT(*) FROM web_command WHERE name = 'gmail'")
+# if cursor.fetchone()[0] == 0:
+#     cursor.execute("INSERT INTO web_command VALUES (null, 'gmail', 'https://mail.google.com/mail/u/0/#inbox')")
+#     con.commit()
+
+# con.commit()
+# con.close()
+
 
 con.commit()
 con.close()

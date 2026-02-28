@@ -1,12 +1,16 @@
+import re
 import pyttsx3
 import speech_recognition as sr
 import eel
 import time
 
+
+# SPEAK
+
 def speak(text):
     text = str(text)
     engine = pyttsx3.init('sapi5')
-    voices = engine.getProperty('voices') 
+    voices = engine.getProperty('voices')
     engine.setProperty('voice', voices[0].id)
     engine.setProperty('rate', 174)
     eel.DisplayMessage(text)
@@ -14,7 +18,7 @@ def speak(text):
     eel.receiverText(text)
     engine.runAndWait()
 
-
+# LISTEN
 def takecommand():
     r = sr.Recognizer()
     with sr.Microphone() as source:
@@ -35,6 +39,7 @@ def takecommand():
     return query.lower()
 
 
+#  MAIN COMMAND HANDLER
 @eel.expose
 def allCommands(message=1):
 
@@ -46,19 +51,30 @@ def allCommands(message=1):
         query = message
         eel.senderText(query)
 
-    try:
-        # ── Open applications ─────────────────────────────────────────────
-        if "open" in query:
-            from engine.features import openCommand
-            openCommand(query)
 
-        # ── YouTube ───────────────────────────────────────────────────────
-        elif "on youtube" in query:
+    if not query or query.strip() == "":
+        eel.ShowHood()
+        return
+
+    try:
+
+        # ── EMAIL (checked FIRST before whatsapp to avoid "mail" conflicts) ─
+        if "email" in query or "send mail" in query or "send an email" in query:
+            from engine.email_handler import handleEmail
+            handleEmail()
+
+        # ── YOUTUBE (checked before "open" to avoid conflict) ─────────────
+        elif "on youtube" in query or "play on youtube" in query:
             from engine.features import PlayYoutube
             PlayYoutube(query)
 
-        # ── 🆕 AI CODE GENERATION ─────────────────────────────────────────
-        # Triggers: "create a login page", "build a calculator", "make a python script", etc.
+        # OPEN APPLICATIONS
+        elif "open" in query:
+            from engine.features import openCommand
+            openCommand(query)
+
+        # AI CODE GENERATION
+        # e.g. "create a login page", "build a calculator", "make a python script"
         elif any(trigger in query for trigger in [
             "create a", "make a", "build a", "generate a", "write a",
             "create an", "make an", "build an", "generate code", "write code"
@@ -69,7 +85,7 @@ def allCommands(message=1):
             from engine.code_generator import handleCodeGeneration
             handleCodeGeneration(query)
 
-        # ── 🆕 SYSTEM CONTROLS — Volume ───────────────────────────────────
+        # VOLUME CONTROLS
         elif any(w in query for w in ["volume up", "increase volume", "turn up volume"]):
             from engine.system_controls import volumeUp
             volumeUp()
@@ -78,23 +94,22 @@ def allCommands(message=1):
             from engine.system_controls import volumeDown
             volumeDown()
 
+        elif "unmute" in query:
+            # BUG FIX: unmute checked before mute so "unmute" doesn't fall into mute
+            from engine.system_controls import unmuteVolume
+            unmuteVolume()
+
         elif "mute" in query:
             from engine.system_controls import muteVolume
             muteVolume()
 
-        elif "unmute" in query:
-            from engine.system_controls import unmuteVolume
-            unmuteVolume()
-
         elif "set volume" in query:
             from engine.system_controls import setVolume
-            # Try to extract number from query e.g. "set volume to 50"
-            import re
             match = re.search(r'\d+', query)
             level = int(match.group()) if match else 50
             setVolume(level)
 
-        # ── 🆕 SYSTEM CONTROLS — Brightness ──────────────────────────────
+        # BRIGHTNESS CONTROLS
         elif any(w in query for w in ["brightness up", "increase brightness", "brighter"]):
             from engine.system_controls import brightnessUp
             brightnessUp()
@@ -105,15 +120,14 @@ def allCommands(message=1):
 
         elif "set brightness" in query:
             from engine.system_controls import setBrightness
-            import re
             match = re.search(r'\d+', query)
             level = int(match.group()) if match else 50
             setBrightness(level)
 
-        # ── WhatsApp / Calls / Messages ───────────────────────────────────
-        elif "send message" in query or "send msg" in query or "message" in query \
-                or "phone call" in query or "video call" in query \
-                or (("call" in query or "video" in query) and "open" not in query):
+        #  WHATSAPP / CALLS / MESSAGES
+        elif ("send message" in query or "send msg" in query or "message" in query
+              or "phone call" in query or "video call" in query
+              or (("call" in query or "video" in query) and "open" not in query)):
             from engine.features import findContact, whatsApp, makeCall, sendMessage
             contact_no, name = findContact(query)
             if contact_no != 0:
@@ -122,47 +136,42 @@ def allCommands(message=1):
                 elif "mobile" in query or "phone" in query:
                     preferance = "mobile"
                 else:
-                    speak("Which mode you want to use whatsapp or mobile")
+                    speak("Which mode you want to use, whatsapp or mobile?")
                     preferance = takecommand()
 
                 print(f"User preference: {preferance}")
 
                 if "mobile" in preferance:
-                    if "send message" in query or "send sms" in query or "send msg" in query or "message" in query:
-                        speak("what message to send")
+                    if "message" in query or "msg" in query:
+                        speak("What message should I send?")
                         message_text = takecommand()
                         sendMessage(message_text, contact_no, name)
-                    elif "phone call" in query or ("call" in query and "video" not in query):
+                    elif "phone call" in query or "call" in query:
                         makeCall(name, contact_no)
                     else:
-                        speak("please try again")
+                        speak("Please try again.")
+
                 elif "whatsapp" in preferance:
                     try:
-                        if "send message" in query or "send msg" in query or "message" in query:
-                            speak("what message to send")
+                        if "message" in query or "msg" in query:
+                            speak("What message should I send?")
                             message_text = takecommand()
                             whatsApp(contact_no, message_text, 'message', name)
-                        elif "phone call" in query or ("call" in query and "video" not in query):
-                            whatsApp(contact_no, "", 'call', name)
                         elif "video call" in query or "video" in query:
                             whatsApp(contact_no, "", 'video call', name)
+                        elif "call" in query:
+                            whatsApp(contact_no, "", 'call', name)
                         else:
-                            speak("please try again")
+                            speak("Please try again.")
                     except Exception as whatsapp_error:
                         print(f"WhatsApp Error: {whatsapp_error}")
                         import traceback
                         traceback.print_exc()
-                        speak(f"Error with whatsapp: {whatsapp_error}")
+                        speak("Error with WhatsApp.")
                 else:
-                    speak(f"I didn't understand, you said {preferance}")
+                    speak(f"I didn't understand. You said {preferance}.")
 
-        # ── Email ─────────────────────────────────────────────────────────
-        elif "email" in query or "mail" in query:
-            from engine.email_handler import handleEmail
-            handleEmail()
-
-        # ── 🆕 AI CONVERSATION (Gemini as friendly AI) ────────────────────
-        # This is the catch-all — anything not matched above goes to Gemini
+        # GEMINI AI CHAT
         else:
             from engine.features import geminai
             geminai(query)
@@ -171,6 +180,6 @@ def allCommands(message=1):
         print(f"Command Error: {e}")
         import traceback
         traceback.print_exc()
-        speak(f"There was an error")
+        speak("There was an error. Please try again.")
 
     eel.ShowHood()

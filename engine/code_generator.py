@@ -1,16 +1,3 @@
-"""
-🧠 AI Code Generator Module
-============================
-Integrates with your existing Voice Assistant (rswaraj09/Voice-Assistant)
-Plugs into: engine/features.py and engine/command.py
-
-Features:
-- Generate code from voice commands using Gemini AI
-- Save files to user-specified location
-- Auto-open in VS Code
-- Auto-run the generated code
-"""
-
 import os
 import subprocess
 import re
@@ -19,18 +6,17 @@ import google.generativeai as genai
 from engine.config import ASSISTANT_NAME, LLM_KEY
 from engine.command import speak, takecommand
 
-# ── VS Code executable path (adjust if needed) ──────────────────────────────
+#  VS Code executable path (adjust if needed) 
 VSCODE_PATH = r"code"  # works if VS Code is in PATH; else use full path like:
 # VSCODE_PATH = r"C:\Users\YourName\AppData\Local\Programs\Microsoft VS Code\Code.exe"
 
-# ── Default save folder ──────────────────────────────────────────────────────
+#  Default save folder 
 DEFAULT_FOLDER = os.path.join(os.path.expanduser("~"), "Desktop", "VoiceOS_Projects")
 os.makedirs(DEFAULT_FOLDER, exist_ok=True)
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  STEP 1: Extract what the user wants to build
-# ════════════════════════════════════════════════════════════════════════════
+
 def extract_code_intent(query: str) -> dict:
     """
     Parse the voice query to understand:
@@ -80,9 +66,8 @@ def extract_code_intent(query: str) -> dict:
     }
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  STEP 2: Generate code using Gemini AI
-# ════════════════════════════════════════════════════════════════════════════
+
 def generate_code_with_ai(intent: str, file_type: str) -> str:
     """Use Gemini to generate clean, working code."""
     try:
@@ -115,9 +100,8 @@ Rules:
         return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  STEP 3: Ask where to save the file
-# ════════════════════════════════════════════════════════════════════════════
+
 def get_save_location(filename: str) -> str:
     """Ask user where to save the file via voice."""
     speak(f"Where should I save the file? Say Desktop, Documents, or a folder name. Or say default to save on Desktop.")
@@ -140,9 +124,8 @@ def get_save_location(filename: str) -> str:
     return os.path.join(folder, filename)
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  STEP 4: Save the file
-# ════════════════════════════════════════════════════════════════════════════
+
 def save_code_to_file(code: str, filepath: str) -> bool:
     """Save generated code to the specified file path."""
     try:
@@ -157,9 +140,8 @@ def save_code_to_file(code: str, filepath: str) -> bool:
         return False
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  STEP 5: Open in VS Code
-# ════════════════════════════════════════════════════════════════════════════
+
 def open_in_vscode(filepath: str):
     """Open the generated file in VS Code."""
     try:
@@ -181,9 +163,8 @@ def open_in_vscode(filepath: str):
         speak("There was an issue opening VS Code.")
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  STEP 6: Run the code
-# ════════════════════════════════════════════════════════════════════════════
+
 def run_code(filepath: str, file_type: str):
     """Run the generated code based on its type."""
     try:
@@ -210,9 +191,8 @@ def run_code(filepath: str, file_type: str):
         speak("I couldn't run the file automatically. Please run it manually.")
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  MAIN FUNCTION — call this from command.py
-# ════════════════════════════════════════════════════════════════════════════
+
 def handleCodeGeneration(query: str):
     """
     Full pipeline:

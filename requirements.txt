@@ -55,7 +55,7 @@ openai==0.27.2
 opencv-contrib-python==4.6.0.66
 opencv-python==4.6.0.66
 packaging==21.3
-Pillow==9.1.1
+Pillow>=9.0.0
 Pint==0.19.2
 pipwin==0.5.2
 playsound==1.2.2
@@ -115,4 +115,10 @@ zope.event==4.5.0
 zope.interface==5.4.0
 python-dotenv==1.2.1
 keyboard>=0.13.5
-Pillow>=9.0.0   
+secure-smtplib
+pycaw
+screen-brightness-control
+selenium
+webdriver-manager
+pyperclip
+PyGetWindow==0.0.9 
