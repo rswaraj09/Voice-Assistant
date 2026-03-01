@@ -1,4 +1,4 @@
-# Nora Voice Assistant
+#Voice Assistant
 
 Nora is an advanced, AI-powered voice assistant built with Python. It features a modern web-based UI and provides various capabilities including opening system applications, playing media, initiating WhatsApp calls/messages, sending emails, and conversing using Large Language Models (LLMs).
 
