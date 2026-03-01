@@ -158,9 +158,11 @@ def allCommands(message=1):
                             message_text = takecommand()
                             whatsApp(contact_no, message_text, 'message', name)
                         elif "video call" in query or "video" in query:
-                            whatsApp(contact_no, "", 'video call', name)
+                            from engine.whatsapp_caller import makeWhatsAppVideoCall
+                            makeWhatsAppVideoCall(contact_no, name)
                         elif "call" in query:
-                            whatsApp(contact_no, "", 'call', name)
+                            from engine.whatsapp_caller import makeWhatsAppVoiceCall
+                            makeWhatsAppVoiceCall(contact_no, name)
                         else:
                             speak("Please try again.")
                     except Exception as whatsapp_error:

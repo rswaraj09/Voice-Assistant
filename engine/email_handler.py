@@ -1,10 +1,3 @@
-"""
-📧 Gmail Browser Automation Email Handler
-==========================================
-Fixed: Waits for compose window to be maximized before filling fields
-Calibrated for 1920x1080
-"""
-
 import time
 import re
 import subprocess

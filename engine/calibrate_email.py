@@ -1,11 +1,4 @@
-"""
-Run this ONCE to find exact Gmail compose field coordinates.
-Steps:
-1. Run this script: python calibrate_email.py
-2. Open Gmail in Chrome
-3. Click the expand icon (⤢) on the New Message bar
-4. When compose is fullscreen, hover over each field and press ENTER
-"""
+
 import pyautogui, time, keyboard
 
 fields = ["TO field", "SUBJECT field", "BODY field", "SEND button"]
