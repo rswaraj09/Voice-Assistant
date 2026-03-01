@@ -1,14 +1,3 @@
-"""
-WhatsApp Call Handler
-=====================
-Flow:
-1. Open WhatsApp (if not already open)
-2. Press Ctrl+F to open search
-3. Type contact name
-4. Press Enter to open the contact chat
-5. Click call button → dropdown → voice/video
-"""
-
 import time
 import subprocess
 import pyautogui
