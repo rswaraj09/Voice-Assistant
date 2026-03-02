@@ -5,20 +5,18 @@ import eel
 import time
 
 
-# SPEAK
-
 def speak(text):
     text = str(text)
     engine = pyttsx3.init('sapi5')
     voices = engine.getProperty('voices')
-    engine.setProperty('voice', voices[0].id)
+    engine.setProperty('voice', voices[1].id)
     engine.setProperty('rate', 174)
     eel.DisplayMessage(text)
     engine.say(text)
     eel.receiverText(text)
     engine.runAndWait()
 
-# LISTEN
+
 def takecommand():
     r = sr.Recognizer()
     with sr.Microphone() as source:
@@ -39,7 +37,18 @@ def takecommand():
     return query.lower()
 
 
-#  MAIN COMMAND HANDLER
+def is_phone_command(query):
+    return bool(re.search(r'\b(phone|mobile|android)\b', query))
+
+
+def extract_app_name(query, *remove_words):
+    words_to_remove = list(remove_words) + ['on', 'my', 'the', 'phone', 'mobile',
+                                              'android', 'laptop', 'windows', 'computer', 'pc']
+    pattern = r'\b(' + '|'.join(words_to_remove) + r')\b'
+    app = re.sub(pattern, '', query).strip()
+    return re.sub(r'\s+', ' ', app).strip()
+
+
 @eel.expose
 def allCommands(message=1):
 
@@ -51,30 +60,39 @@ def allCommands(message=1):
         query = message
         eel.senderText(query)
 
-
     if not query or query.strip() == "":
         eel.ShowHood()
         return
 
     try:
 
-        # ── EMAIL (checked FIRST before whatsapp to avoid "mail" conflicts) ─
+        # EMAIL
         if "email" in query or "send mail" in query or "send an email" in query:
             from engine.email_handler import handleEmail
             handleEmail()
 
-        # ── YOUTUBE (checked before "open" to avoid conflict) ─────────────
+        # YOUTUBE
         elif "on youtube" in query or "play on youtube" in query:
             from engine.features import PlayYoutube
             PlayYoutube(query)
 
-        # OPEN APPLICATIONS
+        # CLOSE APP ON PHONE
+        elif "close" in query and is_phone_command(query):
+            from engine.adb_controller import closeApp
+            app = extract_app_name(query, 'close')
+            closeApp(app)
+
+        # OPEN APP ON PHONE OR LAPTOP
         elif "open" in query:
-            from engine.features import openCommand
-            openCommand(query)
+            if is_phone_command(query):
+                from engine.adb_controller import openApp
+                app = extract_app_name(query, 'open')
+                openApp(app)
+            else:
+                from engine.features import openCommand
+                openCommand(query)
 
         # AI CODE GENERATION
-        # e.g. "create a login page", "build a calculator", "make a python script"
         elif any(trigger in query for trigger in [
             "create a", "make a", "build a", "generate a", "write a",
             "create an", "make an", "build an", "generate code", "write code"
@@ -95,7 +113,6 @@ def allCommands(message=1):
             volumeDown()
 
         elif "unmute" in query:
-            # BUG FIX: unmute checked before mute so "unmute" doesn't fall into mute
             from engine.system_controls import unmuteVolume
             unmuteVolume()
 
@@ -124,19 +141,33 @@ def allCommands(message=1):
             level = int(match.group()) if match else 50
             setBrightness(level)
 
-        #  WHATSAPP / CALLS / MESSAGES
+        # PHONE CONTROLS
+        elif "take screenshot" in query and is_phone_command(query):
+            from engine.adb_controller import takeScreenshot
+            takeScreenshot()
+
+        elif "lock" in query and is_phone_command(query):
+            from engine.adb_controller import lockPhone
+            lockPhone()
+
+        elif "unlock" in query and is_phone_command(query):
+            from engine.adb_controller import unlockPhone
+            unlockPhone()
+
+        # WHATSAPP / CALLS / MESSAGES
         elif ("send message" in query or "send msg" in query or "message" in query
               or "phone call" in query or "video call" in query
               or (("call" in query or "video" in query) and "open" not in query)):
-            from engine.features import findContact, whatsApp, makeCall, sendMessage
+            from engine.features import findContact, whatsApp
             contact_no, name = findContact(query)
             if contact_no != 0:
-                if "whatsapp" in query:
+
+                if re.search(r'\b(whatsapp)\b', query):
                     preferance = "whatsapp"
-                elif "mobile" in query or "phone" in query:
+                elif re.search(r'\b(mobile|phone|android)\b', query):
                     preferance = "mobile"
                 else:
-                    speak("Which mode you want to use, whatsapp or mobile?")
+                    speak("Should I use WhatsApp or mobile call?")
                     preferance = takecommand()
 
                 print(f"User preference: {preferance}")
@@ -145,9 +176,11 @@ def allCommands(message=1):
                     if "message" in query or "msg" in query:
                         speak("What message should I send?")
                         message_text = takecommand()
-                        sendMessage(message_text, contact_no, name)
-                    elif "phone call" in query or "call" in query:
-                        makeCall(name, contact_no)
+                        from engine.adb_controller import sendSMS
+                        sendSMS(contact_no, message_text, name)
+                    elif "call" in query:
+                        from engine.adb_controller import makePhoneCall
+                        makePhoneCall(contact_no, name)
                     else:
                         speak("Please try again.")
 
