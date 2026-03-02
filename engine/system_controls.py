@@ -1,13 +1,3 @@
-"""
-🖥️ System Controls Module
-===========================
-Handles volume and brightness control on Windows.
-Plugs into your existing Voice Assistant (rswaraj09/Voice-Assistant)
-
-Install required packages:
-    pip install screen-brightness-control pycaw comtypes
-"""
-
 from engine.command import speak
 
 # ════════════════════════════════════════════════════════════════════════════

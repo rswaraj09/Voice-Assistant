@@ -1,4 +1,3 @@
-
 @echo off
 echo Disconnecting old connections...
 adb disconnect
@@ -28,3 +27,4 @@ rem Restart the ADB server
 
 rem Connect to the Android device over Wi-Fi
 %ADB_PATH% connect %DEVICE_IP%:%ADB_PORT%
+
