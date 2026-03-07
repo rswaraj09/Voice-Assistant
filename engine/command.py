@@ -5,32 +5,87 @@ import eel
 import time
 
 
+# Global state for interruption
+_interrupted = False
+_paused_text = ""
+_paused_sentences = []
+_paused_index = 0
+
+
 def speak(text):
+    global _interrupted, _paused_text, _paused_sentences, _paused_index
+
     text = str(text)
-    engine = pyttsx3.init('sapi5')
-    voices = engine.getProperty('voices')
-    engine.setProperty('voice', voices[1].id)
-    engine.setProperty('rate', 174)
-    eel.DisplayMessage(text)
-    engine.say(text)
-    eel.receiverText(text)
-    engine.runAndWait()
+    _interrupted = False
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+
+    try:
+        eel.DisplayMessage(text)
+    except:
+        pass
+    try:
+        eel.receiverText(text)
+    except:
+        pass
+
+    for i, sentence in enumerate(sentences):
+        if _interrupted:
+            _paused_sentences = sentences
+            _paused_index = i
+            _paused_text = " ".join(sentences[i:])
+            return
+
+        # Create a fresh engine each sentence — avoids "run loop already started"
+        try:
+            engine = pyttsx3.init('sapi5')
+            voices = engine.getProperty('voices')
+            engine.setProperty('voice', voices[1].id)  # Female voice
+            engine.setProperty('rate', 174)
+            engine.say(sentence)
+            engine.runAndWait()
+            engine.stop()
+        except Exception as e:
+            print(f"[speak] Error: {e}")
+
+    _paused_text = ""
+
+
+def interrupt_speech():
+    global _interrupted
+    _interrupted = True
+
+
+def speak_resume():
+    global _paused_text
+    if _paused_text:
+        remaining = _paused_text
+        _paused_text = ""
+        speak(remaining)
 
 
 def takecommand():
     r = sr.Recognizer()
     with sr.Microphone() as source:
         print('listening....')
-        eel.DisplayMessage('listening....')
+        try:
+            eel.DisplayMessage('listening....')
+        except:
+            pass
         r.pause_threshold = 1
         r.adjust_for_ambient_noise(source)
         audio = r.listen(source, 10, 6)
     try:
         print('recognizing')
-        eel.DisplayMessage('recognizing....')
+        try:
+            eel.DisplayMessage('recognizing....')
+        except:
+            pass
         query = r.recognize_google(audio, language='en-in')
         print(f"user said: {query}")
-        eel.DisplayMessage(query)
+        try:
+            eel.DisplayMessage(query)
+        except:
+            pass
         time.sleep(2)
     except Exception as e:
         return ""
@@ -55,19 +110,51 @@ def allCommands(message=1):
     if message == 1:
         query = takecommand()
         print(query)
-        eel.senderText(query)
+        try:
+            eel.senderText(query)
+        except:
+            pass
     else:
         query = message
-        eel.senderText(query)
+        try:
+            eel.senderText(query)
+        except:
+            pass
 
     if not query or query.strip() == "":
-        eel.ShowHood()
+        try:
+            eel.ShowHood()
+        except:
+            pass
         return
 
     try:
 
+        # STOP
+        if re.search(r'\b(stop|go back|home|cancel)\b', query):
+            speak("Going back to home.")
+            try:
+                eel.ShowHood()
+            except:
+                pass
+            return
+
+        # RESUME
+        elif re.search(r'\b(continue|resume|sorry for interruption|go on)\b', query):
+            if _paused_text:
+                speak("Continuing from where I left off.")
+                remaining = _paused_text
+                speak(remaining)
+            else:
+                speak("There is nothing to continue.")
+            try:
+                eel.ShowHood()
+            except:
+                pass
+            return
+
         # EMAIL
-        if "email" in query or "send mail" in query or "send an email" in query:
+        elif "email" in query or "send mail" in query or "send an email" in query:
             from engine.email_handler import handleEmail
             handleEmail()
 
@@ -82,7 +169,7 @@ def allCommands(message=1):
             app = extract_app_name(query, 'close')
             closeApp(app)
 
-        # OPEN APP ON PHONE OR LAPTOP
+        # OPEN APP
         elif "open" in query:
             if is_phone_command(query):
                 from engine.adb_controller import openApp
@@ -126,7 +213,7 @@ def allCommands(message=1):
             level = int(match.group()) if match else 50
             setVolume(level)
 
-        # BRIGHTNESS CONTROLS
+        # BRIGHTNESS
         elif any(w in query for w in ["brightness up", "increase brightness", "brighter"]):
             from engine.system_controls import brightnessUp
             brightnessUp()
@@ -154,14 +241,13 @@ def allCommands(message=1):
             from engine.adb_controller import unlockPhone
             unlockPhone()
 
-        # WHATSAPP / CALLS / MESSAGES
+        # CALLS / MESSAGES
         elif ("send message" in query or "send msg" in query or "message" in query
               or "phone call" in query or "video call" in query
               or (("call" in query or "video" in query) and "open" not in query)):
             from engine.features import findContact, whatsApp
             contact_no, name = findContact(query)
             if contact_no != 0:
-
                 if re.search(r'\b(whatsapp)\b', query):
                     preferance = "whatsapp"
                 elif re.search(r'\b(mobile|phone|android)\b', query):
@@ -200,16 +286,26 @@ def allCommands(message=1):
                             speak("Please try again.")
                     except Exception as whatsapp_error:
                         print(f"WhatsApp Error: {whatsapp_error}")
-                        import traceback
-                        traceback.print_exc()
                         speak("Error with WhatsApp.")
                 else:
                     speak(f"I didn't understand. You said {preferance}.")
 
-        # GEMINI AI CHAT
+        # GEMINI
         else:
-            from engine.features import geminai
-            geminai(query)
+            from engine.config import LLM_KEY
+            import google.generativeai as genai
+            from engine.helper import markdown_to_text
+
+            query_clean = query.strip()
+            if re.search(r'\b(detail|explain|elaborate|full|complete|in depth|tell me more)\b', query):
+                prompt = f"{query_clean}\nGive a detailed explanation."
+            else:
+                prompt = f"{query_clean}\nAnswer in maximum 2-3 sentences only. Be concise."
+
+            genai.configure(api_key=LLM_KEY)
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            response = model.generate_content(prompt)
+            speak(markdown_to_text(response.text))
 
     except Exception as e:
         print(f"Command Error: {e}")
@@ -217,4 +313,7 @@ def allCommands(message=1):
         traceback.print_exc()
         speak("There was an error. Please try again.")
 
-    eel.ShowHood()
+    try:
+        eel.ShowHood()
+    except:
+        pass

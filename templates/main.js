@@ -3,406 +3,263 @@ $(document).ready(function () {
     eel.init()()
 
     $('.text').textillate({
-        loop: true,
-        sync: true,
-        in: {
-            effect: "bounceIn",
-        },
-        out: {
-            effect: "bounceOut",
-        },
-
+        loop: true, sync: true,
+        in: { effect: "bounceIn" },
+        out: { effect: "bounceOut" },
     });
 
-    // Siri configuration
     var siriWave = new SiriWave({
         container: document.getElementById("siri-container"),
-        width: 800,
-        height: 200,
-        style: "ios9",
-        amplitude: "1",
-        speed: "0.30",
-        autostart: true
+        width: 800, height: 200, style: "ios9",
+        amplitude: "1", speed: "0.30", autostart: true
     });
 
-    // Siri message animation
     $('.siri-message').textillate({
-        loop: true,
-        sync: true,
-        in: {
-            effect: "fadeInUp",
-            sync: true,
-        },
-        out: {
-            effect: "fadeOutUp",
-            sync: true,
-        },
-
+        loop: true, sync: true,
+        in: { effect: "fadeInUp", sync: true },
+        out: { effect: "fadeOutUp", sync: true },
     });
 
-    // mic button click event
+    // ── ASSISTANT STATE ───────────────────────────────────────────────────
+    var isAssistantRunning = false;
 
-    $("#MicBtn").click(function () {
+    // ── EEL EXPOSED FUNCTIONS ─────────────────────────────────────────────
+    eel.expose(ShowHood)
+    function ShowHood() {
+        $("#Oval").attr("hidden", false);
+        $("#SiriWave").attr("hidden", true);
+        isAssistantRunning = false;
+    }
+
+    // Called by hotword polling — shows siri wave WITHOUT calling allCommands
+    // because Python is already running allCommands() directly
+    eel.expose(showSiriWave)
+    function showSiriWave() {
+        isAssistantRunning = true;
+        $("#Oval").attr("hidden", true);
+        $("#SiriWave").attr("hidden", false);
+    }
+
+    eel.expose(DisplayMessage)
+    function DisplayMessage(message) {
+        $(".siri-message li").text(message);
+    }
+
+    eel.expose(senderText)
+    function senderText(message) {
+        if (message && message.length > 0)
+            $(".siri-message li").text(message);
+    }
+
+    eel.expose(receiverText)
+    function receiverText(message) {
+        if (message && message.length > 0)
+            $(".siri-message li").text(message);
+    }
+
+    // ── MANUAL ACTIVATION — mic button / keyboard ─────────────────────────
+    function activateAssistant() {
+        if (isAssistantRunning) return;
+        isAssistantRunning = true;
         eel.playAssistantSound()
         $("#Oval").attr("hidden", true);
         $("#SiriWave").attr("hidden", false);
         eel.allCommands()()
+    }
+
+    $("#MicBtn").click(function () { activateAssistant(); });
+
+    document.addEventListener('keyup', function (e) {
+        if (e.key === 'j' && e.altKey) activateAssistant();
+    }, false);
+
+
+    // ── HOTWORD POLLING ───────────────────────────────────────────────────
+    // When hotword fires from Python:
+    // - Python already calls allCommands() directly
+    // - JS just needs to show the Siri wave UI
+    // - Does NOT call allCommands() again — avoids double listening
+    setInterval(function () {
+        eel.checkHotword()(function (triggered) {
+            if (triggered) {
+                console.log("[Nora] Hotword — showing Siri wave");
+                eel.playAssistantSound()
+                isAssistantRunning = true;
+                $("#Oval").attr("hidden", true);
+                $("#SiriWave").attr("hidden", false);
+                // DO NOT call eel.allCommands() here — Python already handles it
+            }
+        });
+    }, 300);
+
+    // Re-check immediately when window regains focus
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) {
+            eel.checkHotword()(function (triggered) {
+                if (triggered) {
+                    eel.playAssistantSound()
+                    isAssistantRunning = true;
+                    $("#Oval").attr("hidden", true);
+                    $("#SiriWave").attr("hidden", false);
+                }
+            });
+        }
     });
 
-
-    function doc_keyUp(e) {
-        // this would test for whichever key is 40 (down arrow) and the ctrl key at the same time
-
-        if (e.key === 'j' && e.metaKey) {
-            eel.playAssistantSound()
-            $("#Oval").attr("hidden", true);
-            $("#SiriWave").attr("hidden", false);
-            eel.allCommands()()
-        }
-    }
-    document.addEventListener('keyup', doc_keyUp, false);
-
-    // to play assisatnt 
+    // ── CHAT BOX ──────────────────────────────────────────────────────────
     function PlayAssistant(message) {
-
         if (message != "") {
-
+            isAssistantRunning = true;
             $("#Oval").attr("hidden", true);
             $("#SiriWave").attr("hidden", false);
             eel.allCommands(message);
             $("#chatbox").val("")
             $("#MicBtn").attr('hidden', false);
             $("#SendBtn").attr('hidden', true);
-
         }
-
     }
 
-    // toogle fucntion to hide and display mic and send button 
     function ShowHideButton(message) {
         if (message.length == 0) {
             $("#MicBtn").attr('hidden', false);
             $("#SendBtn").attr('hidden', true);
-        }
-        else {
+        } else {
             $("#MicBtn").attr('hidden', true);
             $("#SendBtn").attr('hidden', false);
         }
     }
 
-    // key up event handler on text box
-    $("#chatbox").keyup(function () {
-
-        let message = $("#chatbox").val();
-        ShowHideButton(message)
-
-    });
-
-    // send button event handler
-    $("#SendBtn").click(function () {
-
-        let message = $("#chatbox").val()
-        PlayAssistant(message)
-
-    });
-
-
-    // enter press event handler on chat box
+    $("#chatbox").keyup(function () { ShowHideButton($("#chatbox").val()); });
+    $("#SendBtn").click(function () { PlayAssistant($("#chatbox").val()); });
     $("#chatbox").keypress(function (e) {
-        key = e.which;
-        if (key == 13) {
-            let message = $("#chatbox").val()
-            PlayAssistant(message)
-        }
+        if (e.which == 13) PlayAssistant($("#chatbox").val());
     });
 
-
-    // Settings Code
-
+    // ── SETTINGS ──────────────────────────────────────────────────────────
     eel.personalInfo()();
     eel.displaySysCommand()();
     eel.displayWebCommand()();
     eel.displayPhoneBookCommand()();
 
-
-
-    // Execute: python side :
     eel.expose(getData)
     function getData(user_info) {
         let data = JSON.parse(user_info);
         let idsPersonalInfo = ['OwnerName', 'Designation', 'MobileNo', 'Email', 'City']
-        let idsInputInfo = ['InputOwnerName', 'InputDesignation', 'InputMobileNo', 'InputEmail', 'InputCity']
-
+        let idsInputInfo    = ['InputOwnerName', 'InputDesignation', 'InputMobileNo', 'InputEmail', 'InputCity']
         for (let i = 0; i < data.length; i++) {
-            hashid = "#" + idsPersonalInfo[i]
-            $(hashid).text(data[i]);
+            $("#" + idsPersonalInfo[i]).text(data[i]);
             $("#" + idsInputInfo[i]).val(data[i]);
         }
-
     }
-
-    // Personal Data Update Button:
 
     $("#UpdateBtn").click(function () {
-
-        let OwnerName = $("#InputOwnerName").val();
-        let Designation = $("#InputDesignation").val();
-        let MobileNo = $("#InputMobileNo").val();
-        let Email = $("#InputEmail").val();
-        let City = $("#InputCity").val();
-
+        let OwnerName = $("#InputOwnerName").val(), Designation = $("#InputDesignation").val();
+        let MobileNo  = $("#InputMobileNo").val(),  Email = $("#InputEmail").val(), City = $("#InputCity").val();
         if (OwnerName.length > 0 && Designation.length > 0 && MobileNo.length > 0 && Email.length > 0 && City.length > 0) {
             eel.updatePersonalInfo(OwnerName, Designation, MobileNo, Email, City)
-
-            swal({
-                title: "Updated Successfully",
-                icon: "success",
-            });
-
-
+            swal({ title: "Updated Successfully", icon: "success" });
+        } else {
+            const toast = new bootstrap.Toast(document.getElementById('liveToast'))
+            $("#ToastMessage").text("All Fields Mandatory"); toast.show()
         }
-        else {
-            const toastLiveExample = document.getElementById('liveToast')
-            const toast = new bootstrap.Toast(toastLiveExample)
-
-            $("#ToastMessage").text("All Fields Medatory");
-
-            toast.show()
-        }
-
     });
 
-
-    // Display System Command Method
     eel.expose(displaySysCommand)
     function displaySysCommand(array) {
-
-        let data = JSON.parse(array);
-        console.log(data)
-
-        let placeholder = document.querySelector("#TableData");
-        let out = "";
-        let index = 0
+        let data = JSON.parse(array), out = "", index = 0;
         for (let i = 0; i < data.length; i++) {
             index++
-            out += `
-                    <tr>
-                        <td class="text-light"> ${index} </td>
-                        <td class="text-light"> ${data[i][1]} </td>
-                        <td class="text-light"> ${data[i][2]} </td>
-                        <td class="text-light"> <button id="${data[i][0]}" onClick="SysDeleteID(this.id)" class="btn btn-sm btn-glow-red">Delete</button></td>
-                        
-                    </tr>
-            `;
-
-            // console.log(data[i][0])
-            // console.log(data[i][1])
-
-
+            out += `<tr>
+                <td class="text-light">${index}</td>
+                <td class="text-light">${data[i][1]}</td>
+                <td class="text-light">${data[i][2]}</td>
+                <td class="text-light"><button id="${data[i][0]}" onClick="SysDeleteID(this.id)" class="btn btn-sm btn-glow-red">Delete</button></td>
+            </tr>`;
         }
-
-        placeholder.innerHTML = out;
-
+        document.querySelector("#TableData").innerHTML = out;
     }
 
-    // Add System Command Button
     $("#SysCommandAddBtn").click(function () {
-
-        let key = $("#SysCommandKey").val();
-        let value = $("#SysCommandValue").val();
-
-        if (key.length > 0 && value.length) {
+        let key = $("#SysCommandKey").val(), value = $("#SysCommandValue").val();
+        if (key.length > 0 && value.length > 0) {
             eel.addSysCommand(key, value)
-
-            swal({
-                title: "Updated Successfully",
-                icon: "success",
-            });
+            swal({ title: "Updated Successfully", icon: "success" });
             eel.displaySysCommand()();
-            $("#SysCommandKey").val("");
-            $("#SysCommandValue").val("");
-
-
+            $("#SysCommandKey").val(""); $("#SysCommandValue").val("");
+        } else {
+            const toast = new bootstrap.Toast(document.getElementById('liveToast'))
+            $("#ToastMessage").text("All Fields Mandatory"); toast.show()
         }
-        else {
-            const toastLiveExample = document.getElementById('liveToast')
-            const toast = new bootstrap.Toast(toastLiveExample)
-
-            $("#ToastMessage").text("All Fields Medatory");
-
-            toast.show()
-        }
-
     });
 
-
-    // Display Web Commands Table
     eel.expose(displayWebCommand)
     function displayWebCommand(array) {
-
-        let data = JSON.parse(array);
-        console.log(data)
-
-        let placeholder = document.querySelector("#WebTableData");
-        let out = "";
-        let index = 0
+        let data = JSON.parse(array), out = "", index = 0;
         for (let i = 0; i < data.length; i++) {
             index++
-            out += `
-                    <tr>
-                        <td class="text-light"> ${index} </td>
-                        <td class="text-light"> ${data[i][1]} </td>
-                        <td class="text-light"> ${data[i][2]} </td>
-                        <td class="text-light"> <button id="${data[i][0]}" onClick="WebDeleteID(this.id)" class="btn btn-sm btn-glow-red">Delete</button></td>
-                        
-                    </tr>
-            `;
-
-            // console.log(data[i][0])
-            // console.log(data[i][1])
-
-
+            out += `<tr>
+                <td class="text-light">${index}</td>
+                <td class="text-light">${data[i][1]}</td>
+                <td class="text-light">${data[i][2]}</td>
+                <td class="text-light"><button id="${data[i][0]}" onClick="WebDeleteID(this.id)" class="btn btn-sm btn-glow-red">Delete</button></td>
+            </tr>`;
         }
-
-        placeholder.innerHTML = out;
-
+        document.querySelector("#WebTableData").innerHTML = out;
     }
 
-
-    // Add Web Commands
-
     $("#WebCommandAddBtn").click(function () {
-
-        let key = $("#WebCommandKey").val();
-        let value = $("#WebCommandValue").val();
-
-        if (key.length > 0 && value.length) {
+        let key = $("#WebCommandKey").val(), value = $("#WebCommandValue").val();
+        if (key.length > 0 && value.length > 0) {
             eel.addWebCommand(key, value)
-
-            swal({
-                title: "Updated Successfully",
-                icon: "success",
-            });
+            swal({ title: "Updated Successfully", icon: "success" });
             eel.displayWebCommand()();
-            $("#WebCommandKey").val("");
-            $("#WebCommandValue").val("");
-
-
+            $("#WebCommandKey").val(""); $("#WebCommandValue").val("");
+        } else {
+            const toast = new bootstrap.Toast(document.getElementById('liveToast'))
+            $("#ToastMessage").text("All Fields Mandatory"); toast.show()
         }
-        else {
-            const toastLiveExample = document.getElementById('liveToast')
-            const toast = new bootstrap.Toast(toastLiveExample)
-
-            $("#ToastMessage").text("All Fields Medatory");
-
-            toast.show()
-        }
-
     });
-
-
-    // Display Phone Book
 
     eel.expose(displayPhoneBookCommand)
     function displayPhoneBookCommand(array) {
-
-        let data = JSON.parse(array);
-        console.log(data)
-
-        let placeholder = document.querySelector("#ContactTableData");
-        let out = "";
-        let index = 0
+        let data = JSON.parse(array), out = "", index = 0;
         for (let i = 0; i < data.length; i++) {
             index++
-            out += `
-                    <tr>
-                        <td class="text-light"> ${index} </td>
-                        <td class="text-light"> ${data[i][1]} </td>
-                        <td class="text-light"> ${data[i][2]} </td>
-                        <td class="text-light"> ${data[i][3]} </td>
-                        <td class="text-light"> ${data[i][4]} </td>
-                        <td class="text-light"> <button id="${data[i][0]}" onClick="ContactDeleteID(this.id)" class="btn btn-sm btn-glow-red">Delete</button></td>
-                        
-                    </tr>
-            `;
-
-
+            out += `<tr>
+                <td class="text-light">${index}</td>
+                <td class="text-light">${data[i][1]}</td>
+                <td class="text-light">${data[i][2]}</td>
+                <td class="text-light">${data[i][3]}</td>
+                <td class="text-light">${data[i][4]}</td>
+                <td class="text-light"><button id="${data[i][0]}" onClick="ContactDeleteID(this.id)" class="btn btn-sm btn-glow-red">Delete</button></td>
+            </tr>`;
         }
-
-        placeholder.innerHTML = out;
-
+        document.querySelector("#ContactTableData").innerHTML = out;
     }
 
-    // Add Contacts to database
-
     $("#AddContactBtn").click(function () {
-
-        let Name = $("#InputContactName").val();
-        let MobileNo = $("#InputContactMobileNo").val();
-        let Email = $("#InputContactEmail").val();
-        let City = $("#InputContactCity").val();
-
+        let Name = $("#InputContactName").val(), MobileNo = $("#InputContactMobileNo").val();
+        let Email = $("#InputContactEmail").val(), City = $("#InputContactCity").val();
         if (Name.length > 0 && MobileNo.length > 0) {
-
-            if (Email.length < 0) {
-                Email = "";
-            }
-            else if (City < 0) {
-                City = "";
-            }
-
             eel.InsertContacts(Name, MobileNo, Email, City)
-
-            swal({
-                title: "Updated Successfully",
-                icon: "success",
-            });
-
-            $("#InputContactName").val("");
-            $("#InputContactMobileNo").val("");
-            $("#InputContactEmail").val("");
-            $("#InputContactCity").val("");
+            swal({ title: "Updated Successfully", icon: "success" });
+            $("#InputContactName").val(""); $("#InputContactMobileNo").val("");
+            $("#InputContactEmail").val(""); $("#InputContactCity").val("");
             eel.displayPhoneBookCommand()()
-
+        } else {
+            const toast = new bootstrap.Toast(document.getElementById('liveToast'))
+            $("#ToastMessage").text("Name and Mobile number Mandatory"); toast.show()
         }
-        else {
-            const toastLiveExample = document.getElementById('liveToast')
-            const toast = new bootstrap.Toast(toastLiveExample)
-
-            $("#ToastMessage").text("Name and Mobile number Madatory");
-
-            toast.show()
-        }
-
     });
-
-
-
 
 });
 
 function SysDeleteID(clicked_id) {
-
-
-    // console.log(clicked_id);
-    eel.deleteSysCommand(clicked_id)
-    eel.displaySysCommand()();
-
+    eel.deleteSysCommand(clicked_id); eel.displaySysCommand()();
 }
-
 function WebDeleteID(clicked_id) {
-
-
-    // console.log(clicked_id);
-    eel.deleteWebCommand(clicked_id)
-    eel.displayWebCommand()();
-
-
+    eel.deleteWebCommand(clicked_id); eel.displayWebCommand()();
 }
 function ContactDeleteID(clicked_id) {
-
-    // console.log(clicked_id);
-    eel.deletePhoneBookCommand(clicked_id)
-    eel.displayPhoneBookCommand()();
-
+    eel.deletePhoneBookCommand(clicked_id); eel.displayPhoneBookCommand()();
 }
