@@ -20,17 +20,15 @@ import google.generativeai as genai
 
 HOTWORD_TRIGGER_FILE = "hotword_trigger.txt"
 
-# ── Thread-safe SQLite: each thread gets its own connection ───────────────
+# ── Thread-safe SQLite ────────────────────────────────────────────────────
 _local = threading.local()
 
 def get_cursor():
-    """Returns a sqlite cursor for the current thread."""
     if not hasattr(_local, 'con'):
         _local.con = sqlite3.connect("nora.db")
         _local.cursor = _local.con.cursor()
     return _local.con, _local.cursor
 
-# Keep a main-thread connection for eel-exposed functions
 _main_con = sqlite3.connect("nora.db")
 _main_cursor = _main_con.cursor()
 
@@ -45,7 +43,7 @@ def playAssistantSound():
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  CHECK HOTWORD — JS polls this every 300ms
+#  CHECK HOTWORD — JS polls this as fallback
 # ════════════════════════════════════════════════════════════════════════════
 @eel.expose
 def checkHotword():
@@ -59,34 +57,48 @@ def checkHotword():
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  BRING NORA WINDOW TO FOCUS
+#  HOTWORD DETECTION — Process 2 ONLY
+#  Does ONE thing: writes trigger file when hotword detected
+#  Process 1 (trigger_watcher in main.py) handles everything else
 # ════════════════════════════════════════════════════════════════════════════
-def bring_nora_to_focus():
+def hotword():
+    porcupine = None
+    paud = None
+    audio_stream = None
     try:
-        import pygetwindow as gw
-        windows = (
-            gw.getWindowsWithTitle('Nora') or
-            gw.getWindowsWithTitle('localhost:8000') or
-            gw.getWindowsWithTitle('index.html')
+        porcupine = pvporcupine.create(keywords=["jarvis", "alexa"])
+        paud = pyaudio.PyAudio()
+        audio_stream = paud.open(
+            rate=porcupine.sample_rate,
+            channels=1,
+            format=pyaudio.paInt16,
+            input=True,
+            frames_per_buffer=porcupine.frame_length
         )
-        if windows:
-            win = windows[0]
-            win.minimize()
-            time.sleep(0.1)
-            win.restore()
-            win.activate()
-            time.sleep(0.4)
-            print("[Hotword] Window focused")
-            return True
-        print("[Hotword] Window not found")
-        return False
+
+        print("[Hotword] Listening for 'Jarvis'...")
+
+        while True:
+            keyword = audio_stream.read(porcupine.frame_length)
+            keyword = struct.unpack_from("h" * porcupine.frame_length, keyword)
+            keyword_index = porcupine.process(keyword)
+
+            if keyword_index >= 0:
+                print("[Hotword] Detected! Writing trigger...")
+                with open(HOTWORD_TRIGGER_FILE, "w") as f:
+                    f.write("trigger")
+                time.sleep(2)  # prevent double triggers
+
     except Exception as e:
-        print(f"[Hotword] Focus error: {e}")
-        return False
+        print(f"[Hotword Error] {e}")
+    finally:
+        if porcupine is not None: porcupine.delete()
+        if audio_stream is not None: audio_stream.close()
+        if paud is not None: paud.terminate()
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  OPEN COMMAND — uses thread-local cursor
+#  OPEN COMMAND
 # ════════════════════════════════════════════════════════════════════════════
 def openCommand(query):
     query = query.replace(ASSISTANT_NAME, "")
@@ -128,59 +140,7 @@ def PlayYoutube(query):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  HOTWORD DETECTION
-# ════════════════════════════════════════════════════════════════════════════
-def hotword():
-    porcupine = None
-    paud = None
-    audio_stream = None
-    try:
-        porcupine = pvporcupine.create(keywords=["jarvis", "alexa"])
-        paud = pyaudio.PyAudio()
-        audio_stream = paud.open(
-            rate=porcupine.sample_rate,
-            channels=1,
-            format=pyaudio.paInt16,
-            input=True,
-            frames_per_buffer=porcupine.frame_length
-        )
-
-        if os.path.exists(HOTWORD_TRIGGER_FILE):
-            os.remove(HOTWORD_TRIGGER_FILE)
-
-        print("[Hotword] Listening for 'Jarvis'...")
-
-        while True:
-            keyword = audio_stream.read(porcupine.frame_length)
-            keyword = struct.unpack_from("h" * porcupine.frame_length, keyword)
-            keyword_index = porcupine.process(keyword)
-
-            if keyword_index >= 0:
-                print("[Hotword] Detected!")
-
-                try:
-                    from engine.command import interrupt_speech
-                    interrupt_speech()
-                except:
-                    pass
-
-                bring_nora_to_focus()
-
-                with open(HOTWORD_TRIGGER_FILE, "w") as f:
-                    f.write("trigger")
-
-                time.sleep(2)
-
-    except Exception as e:
-        print(f"[Hotword Error] {e}")
-    finally:
-        if porcupine is not None: porcupine.delete()
-        if audio_stream is not None: audio_stream.close()
-        if paud is not None: paud.terminate()
-
-
-# ════════════════════════════════════════════════════════════════════════════
-#  FIND CONTACT — uses thread-local cursor
+#  FIND CONTACT
 # ════════════════════════════════════════════════════════════════════════════
 def findContact(query):
     match = re.search(r'to\s+([a-zA-Z\s]+?)(?:\s+on|\s*$)', query, re.IGNORECASE)
@@ -198,7 +158,6 @@ def findContact(query):
             ('%' + query + '%', query + '%')
         )
         results = cursor.fetchall()
-        print(results[0][0])
         mobile_number_str = str(results[0][0])
         if not mobile_number_str.startswith('+91'):
             mobile_number_str = '+91' + mobile_number_str
@@ -209,7 +168,7 @@ def findContact(query):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  WHATSAPP — MESSAGE ONLY
+#  WHATSAPP
 # ════════════════════════════════════════════════════════════════════════════
 def whatsApp(mobile_no, message, flag, name):
     from pipes import quote
@@ -279,7 +238,7 @@ def geminai(query):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  EEL EXPOSED — UI FUNCTIONS (use main thread cursor)
+#  EEL EXPOSED — UI FUNCTIONS
 # ════════════════════════════════════════════════════════════════════════════
 @eel.expose
 def assistantName():
@@ -291,8 +250,7 @@ def personalInfo():
     try:
         _main_cursor.execute("SELECT * FROM info")
         results = _main_cursor.fetchall()
-        jsonArr = json.dumps(results[0])
-        eel.getData(jsonArr)
+        eel.getData(json.dumps(results[0]))
         return 1
     except:
         print("no data")
@@ -344,6 +302,24 @@ def displayWebCommand():
     eel.displayWebCommand(json.dumps(results))
     return 1
 
+
+@eel.expose
+def checkUITrigger():
+    import os
+    UI_TRIGGER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ui_trigger.txt")
+    UI_TRIGGER_FILE = os.path.normpath(UI_TRIGGER_FILE)
+    if os.path.exists(UI_TRIGGER_FILE):
+        try:
+            os.remove(UI_TRIGGER_FILE)
+        except:
+            pass
+        return True
+    return False
+
+
+@eel.expose  
+def showSiriWaveFromPython():
+    pass  # JS handles this via checkUITrigger polling          
 
 @eel.expose
 def addWebCommand(key, value):

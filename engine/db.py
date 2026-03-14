@@ -1,8 +1,8 @@
-import csv
-import sqlite3
-con = sqlite3.connect("nora.db")
+# import csv
+# import sqlite3
+# con = sqlite3.connect("nora.db")
 
-cursor = con.cursor()
+# cursor = con.cursor()
 
 # query = "CREATE TABLE IF NOT EXISTS sys_command(id integer primary key, name VARCHAR(100), path VARCHAR(1000))"
 # cursor.execute(query)
@@ -79,5 +79,15 @@ cursor = con.cursor()
 # con.close()
 
 
+# con.commit()
+# con.close()
+
+import sqlite3
+con = sqlite3.connect("D:/PROJECTS/Voice Assistant/nora.db")
+cursor = con.cursor()
+
+cursor.execute("UPDATE sys_command SET path=? WHERE LOWER(name)='whatsapp'", 
+               ("C:\\Program Files\\WindowsApps\\5319275A.WhatsAppDesktop_2.2607.106.0_x64__cv1g1gvanyjgm\\WhatsApp.exe",))
 con.commit()
+print("Updated! Rows affected:", cursor.rowcount)
 con.close()

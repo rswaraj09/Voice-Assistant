@@ -31,15 +31,6 @@ $(document).ready(function () {
         isAssistantRunning = false;
     }
 
-    // Called by hotword polling — shows siri wave WITHOUT calling allCommands
-    // because Python is already running allCommands() directly
-    eel.expose(showSiriWave)
-    function showSiriWave() {
-        isAssistantRunning = true;
-        $("#Oval").attr("hidden", true);
-        $("#SiriWave").attr("hidden", false);
-    }
-
     eel.expose(DisplayMessage)
     function DisplayMessage(message) {
         $(".siri-message li").text(message);
@@ -57,13 +48,19 @@ $(document).ready(function () {
             $(".siri-message li").text(message);
     }
 
-    // ── MANUAL ACTIVATION — mic button / keyboard ─────────────────────────
-    function activateAssistant() {
-        if (isAssistantRunning) return;
+    // ── SHOW SIRI WAVE ────────────────────────────────────────────────────
+    function showSiriWave() {
         isAssistantRunning = true;
         eel.playAssistantSound()
         $("#Oval").attr("hidden", true);
         $("#SiriWave").attr("hidden", false);
+        console.log("[Nora] Siri wave activated");
+    }
+
+    // ── MANUAL ACTIVATION ─────────────────────────────────────────────────
+    function activateAssistant() {
+        if (isAssistantRunning) return;
+        showSiriWave();
         eel.allCommands()()
     }
 
@@ -74,44 +71,24 @@ $(document).ready(function () {
     }, false);
 
 
-    // ── HOTWORD POLLING ───────────────────────────────────────────────────
-    // When hotword fires from Python:
-    // - Python already calls allCommands() directly
-    // - JS just needs to show the Siri wave UI
-    // - Does NOT call allCommands() again — avoids double listening
+    // ── HOTWORD POLLING — polls ui_trigger.txt ────────────────────────────
+    // Python watcher writes ui_trigger.txt → JS shows Siri wave
+    // Python also calls allCommands() directly so JS does NOT call it again
     setInterval(function () {
-        eel.checkHotword()(function (triggered) {
+        eel.checkUITrigger()(function (triggered) {
             if (triggered) {
-                console.log("[Nora] Hotword — showing Siri wave");
-                eel.playAssistantSound()
-                isAssistantRunning = true;
-                $("#Oval").attr("hidden", true);
-                $("#SiriWave").attr("hidden", false);
-                // DO NOT call eel.allCommands() here — Python already handles it
+                console.log("[Nora] UI trigger detected — showing Siri wave");
+                showSiriWave();
+                // DO NOT call allCommands() — Python already handles listening
             }
         });
-    }, 300);
+    }, 200);
 
-    // Re-check immediately when window regains focus
-    document.addEventListener('visibilitychange', function () {
-        if (!document.hidden) {
-            eel.checkHotword()(function (triggered) {
-                if (triggered) {
-                    eel.playAssistantSound()
-                    isAssistantRunning = true;
-                    $("#Oval").attr("hidden", true);
-                    $("#SiriWave").attr("hidden", false);
-                }
-            });
-        }
-    });
 
     // ── CHAT BOX ──────────────────────────────────────────────────────────
     function PlayAssistant(message) {
         if (message != "") {
-            isAssistantRunning = true;
-            $("#Oval").attr("hidden", true);
-            $("#SiriWave").attr("hidden", false);
+            showSiriWave();
             eel.allCommands(message);
             $("#chatbox").val("")
             $("#MicBtn").attr('hidden', false);
@@ -135,11 +112,20 @@ $(document).ready(function () {
         if (e.which == 13) PlayAssistant($("#chatbox").val());
     });
 
+
     // ── SETTINGS ──────────────────────────────────────────────────────────
     eel.personalInfo()();
     eel.displaySysCommand()();
     eel.displayWebCommand()();
     eel.displayPhoneBookCommand()();
+
+    eel.expose(showSiriWaveFromPython)
+    function showSiriWaveFromPython() {
+        isAssistantRunning = true;
+        $("#Oval").attr("hidden", true);
+        $("#SiriWave").attr("hidden", false);
+        console.log("[Nora] Siri wave shown from Python call");
+    }
 
     eel.expose(getData)
     function getData(user_info) {

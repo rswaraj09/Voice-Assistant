@@ -106,6 +106,11 @@ def extract_app_name(query, *remove_words):
 
 @eel.expose
 def allCommands(message=1):
+    # Show Siri wave immediately when called
+    try:
+        eel.showSiriWaveFromPython()  
+    except:
+        pass
 
     if message == 1:
         query = takecommand()
