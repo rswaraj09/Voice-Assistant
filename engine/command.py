@@ -1,51 +1,123 @@
 import re
+import asyncio
+import edge_tts
+import pygame
 import pyttsx3
+import os
+import io
+import hashlib
 import speech_recognition as sr
 import eel
 import time
 
 
-# Global state for interruption
+# ── Global state ──────────────────────────────────────────────────────────
 _interrupted = False
 _paused_text = ""
-_paused_sentences = []
-_paused_index = 0
+_conversation_history = []
+MAX_HISTORY = 10
+
+# ── Voice config ──────────────────────────────────────────────────────────
+VOICE = "en-IN-NeerjaNeural"   # Indian female — faster than Expressive
+RATE  = "+20%"
+PITCH = "+0Hz"
+
+# ── Audio cache — common phrases play instantly ───────────────────────────
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tts_cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SPEAK — Edge TTS with cache + pyttsx3 fallback
+# ════════════════════════════════════════════════════════════════════════════
+async def _generate_audio(text):
+    """Generate audio bytes using Edge TTS."""
+    communicate = edge_tts.Communicate(text, voice=VOICE, rate=RATE, pitch=PITCH)
+    audio_bytes = b""
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            audio_bytes += chunk["data"]
+        if _interrupted:
+            break
+    return audio_bytes
+
+
+def _get_cache_path(text):
+    """Get cache file path for a given text."""
+    key = hashlib.md5(f"{VOICE}{RATE}{text}".encode()).hexdigest()
+    return os.path.join(CACHE_DIR, f"{key}.mp3")
+
+
+def _play_audio_bytes(audio_bytes):
+    """Play audio from bytes using pygame."""
+    global _interrupted
+    audio_io = io.BytesIO(audio_bytes)
+    pygame.mixer.music.load(audio_io, "mp3")
+    pygame.mixer.music.play()
+    while pygame.mixer.music.get_busy():
+        if _interrupted:
+            pygame.mixer.music.stop()
+            break
+        time.sleep(0.05)
 
 
 def speak(text):
-    global _interrupted, _paused_text, _paused_sentences, _paused_index
+    global _interrupted, _paused_text
 
-    text = str(text)
+    text = str(text).strip()
+    if not text:
+        return
+
     _interrupted = False
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
 
     try:
         eel.DisplayMessage(text)
-    except:
-        pass
-    try:
         eel.receiverText(text)
     except:
         pass
 
-    for i, sentence in enumerate(sentences):
-        if _interrupted:
-            _paused_sentences = sentences
-            _paused_index = i
-            _paused_text = " ".join(sentences[i:])
-            return
+    cache_path = _get_cache_path(text)
 
-        # Create a fresh engine each sentence — avoids "run loop already started"
+    try:
+        pygame.mixer.init(frequency=24000)
+
+        if os.path.exists(cache_path):
+            # ── Cache hit — play instantly! ───────────────────────────────
+            print(f"[speak] Cache hit")
+            with open(cache_path, "rb") as f:
+                audio_bytes = f.read()
+        else:
+            # ── Generate via Edge TTS ─────────────────────────────────────
+            print(f"[speak] Generating audio...")
+            audio_bytes = asyncio.run(_generate_audio(text))
+
+            # Save to cache for next time
+            if audio_bytes:
+                with open(cache_path, "wb") as f:
+                    f.write(audio_bytes)
+
+        if audio_bytes and not _interrupted:
+            _play_audio_bytes(audio_bytes)
+
+    except Exception as e:
+        print(f"[speak] Edge TTS error: {e} — falling back to pyttsx3")
+        # Fallback to pyttsx3 (Zira — instant, no network)
         try:
             engine = pyttsx3.init('sapi5')
             voices = engine.getProperty('voices')
-            engine.setProperty('voice', voices[1].id)  # Female voice
-            engine.setProperty('rate', 174)
-            engine.say(sentence)
+            engine.setProperty('voice', voices[1].id)  # Zira
+            engine.setProperty('rate', 185)
+            engine.setProperty('volume', 1.0)
+            engine.say(text)
             engine.runAndWait()
             engine.stop()
-        except Exception as e:
-            print(f"[speak] Error: {e}")
+        except Exception as e2:
+            print(f"[speak] Fallback error: {e2}")
+    finally:
+        try:
+            pygame.mixer.quit()
+        except:
+            pass
 
     _paused_text = ""
 
@@ -63,6 +135,43 @@ def speak_resume():
         speak(remaining)
 
 
+# ── Pre-cache common phrases at startup ──────────────────────────────────
+def precache_common_phrases():
+    """Pre-generate audio for common phrases so they play instantly."""
+    phrases = [
+        "listening....",
+        "Hello, Welcome Sir, How can I Help You",
+        "Opening WhatsApp",
+        "Sure, what would you like to know?",
+        "Okay, see you later!",
+        "Sorry, something went wrong!",
+        "Fresh start! What's on your mind?",
+        "Should I use WhatsApp or mobile?",
+        "What should I say?",
+    ]
+
+    def _cache():
+        for phrase in phrases:
+            cache_path = _get_cache_path(phrase)
+            if not os.path.exists(cache_path):
+                try:
+                    audio_bytes = asyncio.run(_generate_audio(phrase))
+                    if audio_bytes:
+                        with open(cache_path, "wb") as f:
+                            f.write(audio_bytes)
+                        print(f"[Cache] Cached: {phrase[:40]}")
+                except:
+                    pass
+
+    # Run in background so startup isn't delayed
+    import threading
+    threading.Thread(target=_cache, daemon=True).start()
+    print("[Cache] Pre-caching common phrases in background...")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  TAKE COMMAND
+# ════════════════════════════════════════════════════════════════════════════
 def takecommand():
     r = sr.Recognizer()
     with sr.Microphone() as source:
@@ -84,9 +193,10 @@ def takecommand():
         print(f"user said: {query}")
         try:
             eel.DisplayMessage(query)
+            eel.senderText(query)
         except:
             pass
-        time.sleep(2)
+        time.sleep(0.3)
     except Exception as e:
         return ""
     return query.lower()
@@ -104,149 +214,188 @@ def extract_app_name(query, *remove_words):
     return re.sub(r'\s+', ' ', app).strip()
 
 
-@eel.expose
-def allCommands(message=1):
-    # Show Siri wave immediately when called
+# ════════════════════════════════════════════════════════════════════════════
+#  AI CONVERSATION — Gemini streams, speaks sentence by sentence
+# ════════════════════════════════════════════════════════════════════════════
+def chat_with_nora(query):
+    global _conversation_history
+    from engine.config import LLM_KEY
+    from engine.helper import markdown_to_text
+    import google.generativeai as genai
+
+    _conversation_history.append({"role": "user", "parts": [query]})
+    if len(_conversation_history) > MAX_HISTORY * 2:
+        _conversation_history = _conversation_history[-(MAX_HISTORY * 2):]
+
+    system_prompt = """You are Nora, a friendly, witty, and intelligent AI voice assistant. 
+You talk like a close friend — casual, warm, and natural. Keep responses SHORT (1-3 sentences max) 
+since this is a voice conversation. Be direct, fun, and human. 
+Don't use bullet points, markdown, or long explanations unless asked.
+Remember the conversation context and refer back to it naturally."""
+
     try:
-        eel.showSiriWaveFromPython()  
-    except:
-        pass
+        genai.configure(api_key=LLM_KEY)
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash",
+            system_instruction=system_prompt
+        )
+        chat = model.start_chat(history=_conversation_history[:-1])
+        response = chat.send_message(query, stream=True)
 
-    if message == 1:
-        query = takecommand()
-        print(query)
-        try:
-            eel.senderText(query)
-        except:
-            pass
-    else:
-        query = message
-        try:
-            eel.senderText(query)
-        except:
-            pass
+        buffer = ""
+        full_reply = ""
 
+        for chunk in response:
+            if _interrupted:
+                break
+            chunk_text = markdown_to_text(chunk.text) if chunk.text else ""
+            buffer += chunk_text
+            full_reply += chunk_text
+
+            # Speak complete sentences immediately
+            sentences = re.split(r'(?<=[.!?])\s+', buffer)
+            if len(sentences) > 1:
+                to_speak = " ".join(sentences[:-1]).strip()
+                buffer = sentences[-1]
+                if to_speak:
+                    speak(to_speak)
+
+        if buffer.strip() and not _interrupted:
+            speak(buffer.strip())
+
+        _conversation_history.append({"role": "model", "parts": [full_reply]})
+
+    except Exception as e:
+        print(f"[Chat] Error: {e}")
+        try:
+            genai.configure(api_key=LLM_KEY)
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            response = model.generate_content(f"{system_prompt}\n\nUser: {query}\nNora:")
+            speak(markdown_to_text(response.text).strip())
+        except:
+            speak("Sorry, couldn't think of a response right now!")
+
+
+def clear_conversation():
+    global _conversation_history
+    _conversation_history = []
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  PROCESS SINGLE QUERY
+# ════════════════════════════════════════════════════════════════════════════
+def process_query(query):
     if not query or query.strip() == "":
-        try:
-            eel.ShowHood()
-        except:
-            pass
-        return
+        return False
 
     try:
 
-        # STOP
-        if re.search(r'\b(stop|go back|home|cancel)\b', query):
-            speak("Going back to home.")
-            try:
-                eel.ShowHood()
-            except:
-                pass
-            return
+        if re.search(r'\b(stop|go back|home|cancel|goodbye|bye|exit)\b', query):
+            speak("Okay, see you later!")
+            return False
 
-        # RESUME
         elif re.search(r'\b(continue|resume|sorry for interruption|go on)\b', query):
             if _paused_text:
-                speak("Continuing from where I left off.")
-                remaining = _paused_text
-                speak(remaining)
+                speak("Sure, continuing!")
+                speak(_paused_text)
             else:
-                speak("There is nothing to continue.")
-            try:
-                eel.ShowHood()
-            except:
-                pass
-            return
+                speak("Nothing to continue!")
+            return True
 
-        # EMAIL
+        elif re.search(r'\b(forget|clear|reset|new conversation|start over)\b', query):
+            clear_conversation()
+            speak("Fresh start! What's on your mind?")
+            return True
+
         elif "email" in query or "send mail" in query or "send an email" in query:
             from engine.email_handler import handleEmail
             handleEmail()
+            return True
 
-        # YOUTUBE
         elif "on youtube" in query or "play on youtube" in query:
             from engine.features import PlayYoutube
             PlayYoutube(query)
+            return False
 
-        # CLOSE APP ON PHONE
         elif "close" in query and is_phone_command(query):
             from engine.adb_controller import closeApp
-            app = extract_app_name(query, 'close')
-            closeApp(app)
+            closeApp(extract_app_name(query, 'close'))
+            return True
 
-        # OPEN APP
         elif "open" in query:
             if is_phone_command(query):
                 from engine.adb_controller import openApp
-                app = extract_app_name(query, 'open')
-                openApp(app)
+                openApp(extract_app_name(query, 'open'))
             else:
                 from engine.features import openCommand
                 openCommand(query)
+            return False
 
-        # AI CODE GENERATION
-        elif any(trigger in query for trigger in [
-            "create a", "make a", "build a", "generate a", "write a",
-            "create an", "make an", "build an", "generate code", "write code"
-        ]) and any(t in query for t in [
-            "page", "website", "script", "program", "app", "calculator",
-            "form", "code", "html", "python", "javascript", "login", "game", "tool"
-        ]):
+        elif any(t in query for t in ["create a", "make a", "build a", "generate a", "write a",
+                                       "create an", "make an", "build an", "generate code", "write code"]) \
+        and any(t in query for t in ["page", "website", "script", "program", "app", "calculator",
+                                      "form", "code", "html", "python", "javascript", "login", "game"]):
             from engine.code_generator import handleCodeGeneration
             handleCodeGeneration(query)
+            return True
 
-        # VOLUME CONTROLS
-        elif any(w in query for w in ["volume up", "increase volume", "turn up volume"]):
+        elif any(w in query for w in ["volume up", "increase volume", "turn up"]):
             from engine.system_controls import volumeUp
             volumeUp()
+            return True
 
-        elif any(w in query for w in ["volume down", "decrease volume", "turn down volume"]):
+        elif any(w in query for w in ["volume down", "decrease volume", "turn down"]):
             from engine.system_controls import volumeDown
             volumeDown()
+            return True
 
         elif "unmute" in query:
             from engine.system_controls import unmuteVolume
             unmuteVolume()
+            return True
 
         elif "mute" in query:
             from engine.system_controls import muteVolume
             muteVolume()
+            return True
 
         elif "set volume" in query:
             from engine.system_controls import setVolume
             match = re.search(r'\d+', query)
-            level = int(match.group()) if match else 50
-            setVolume(level)
+            setVolume(int(match.group()) if match else 50)
+            return True
 
-        # BRIGHTNESS
         elif any(w in query for w in ["brightness up", "increase brightness", "brighter"]):
             from engine.system_controls import brightnessUp
             brightnessUp()
+            return True
 
-        elif any(w in query for w in ["brightness down", "decrease brightness", "dimmer", "dim screen"]):
+        elif any(w in query for w in ["brightness down", "decrease brightness", "dimmer"]):
             from engine.system_controls import brightnessDown
             brightnessDown()
+            return True
 
         elif "set brightness" in query:
             from engine.system_controls import setBrightness
             match = re.search(r'\d+', query)
-            level = int(match.group()) if match else 50
-            setBrightness(level)
+            setBrightness(int(match.group()) if match else 50)
+            return True
 
-        # PHONE CONTROLS
         elif "take screenshot" in query and is_phone_command(query):
             from engine.adb_controller import takeScreenshot
             takeScreenshot()
+            return True
 
         elif "lock" in query and is_phone_command(query):
             from engine.adb_controller import lockPhone
             lockPhone()
+            return True
 
         elif "unlock" in query and is_phone_command(query):
             from engine.adb_controller import unlockPhone
             unlockPhone()
+            return True
 
-        # CALLS / MESSAGES
         elif ("send message" in query or "send msg" in query or "message" in query
               or "phone call" in query or "video call" in query
               or (("call" in query or "video" in query) and "open" not in query)):
@@ -258,65 +407,76 @@ def allCommands(message=1):
                 elif re.search(r'\b(mobile|phone|android)\b', query):
                     preferance = "mobile"
                 else:
-                    speak("Should I use WhatsApp or mobile call?")
+                    speak("Should I use WhatsApp or mobile?")
                     preferance = takecommand()
-
-                print(f"User preference: {preferance}")
 
                 if "mobile" in preferance:
                     if "message" in query or "msg" in query:
-                        speak("What message should I send?")
+                        speak("What should I say?")
                         message_text = takecommand()
                         from engine.adb_controller import sendSMS
                         sendSMS(contact_no, message_text, name)
                     elif "call" in query:
                         from engine.adb_controller import makePhoneCall
                         makePhoneCall(contact_no, name)
-                    else:
-                        speak("Please try again.")
-
                 elif "whatsapp" in preferance:
                     try:
                         if "message" in query or "msg" in query:
-                            speak("What message should I send?")
+                            speak("What should I say?")
                             message_text = takecommand()
                             whatsApp(contact_no, message_text, 'message', name)
-                        elif "video call" in query or "video" in query:
+                        elif "video" in query:
                             from engine.whatsapp_caller import makeWhatsAppVideoCall
                             makeWhatsAppVideoCall(contact_no, name)
                         elif "call" in query:
                             from engine.whatsapp_caller import makeWhatsAppVoiceCall
                             makeWhatsAppVoiceCall(contact_no, name)
-                        else:
-                            speak("Please try again.")
-                    except Exception as whatsapp_error:
-                        print(f"WhatsApp Error: {whatsapp_error}")
-                        speak("Error with WhatsApp.")
-                else:
-                    speak(f"I didn't understand. You said {preferance}.")
+                    except Exception as e:
+                        print(f"WhatsApp Error: {e}")
+                        speak("Something went wrong with WhatsApp.")
+            return False
 
-        # GEMINI
         else:
-            from engine.config import LLM_KEY
-            import google.generativeai as genai
-            from engine.helper import markdown_to_text
-
-            query_clean = query.strip()
-            if re.search(r'\b(detail|explain|elaborate|full|complete|in depth|tell me more)\b', query):
-                prompt = f"{query_clean}\nGive a detailed explanation."
-            else:
-                prompt = f"{query_clean}\nAnswer in maximum 2-3 sentences only. Be concise."
-
-            genai.configure(api_key=LLM_KEY)
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            response = model.generate_content(prompt)
-            speak(markdown_to_text(response.text))
+            chat_with_nora(query)
+            return True
 
     except Exception as e:
         print(f"Command Error: {e}")
         import traceback
         traceback.print_exc()
-        speak("There was an error. Please try again.")
+        speak("Oops, something went wrong!")
+        return True
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  MAIN ENTRY POINT
+# ════════════════════════════════════════════════════════════════════════════
+@eel.expose
+def allCommands(message=1):
+
+    # Pre-cache common phrases on first run
+    precache_common_phrases()
+
+    if message == 1:
+        query = takecommand()
+        print(query)
+    else:
+        query = message
+        try:
+            eel.senderText(query)
+        except:
+            pass
+
+    keep_going = process_query(query)
+
+    while keep_going:
+        try:
+            eel.DisplayMessage('listening....')
+        except:
+            pass
+        query = takecommand()
+        print(f"[Loop] user said: {query}")
+        keep_going = process_query(query)
 
     try:
         eel.ShowHood()
