@@ -9,6 +9,7 @@ import hashlib
 import speech_recognition as sr
 import eel
 import time
+import threading
 
 
 # ── Global state ──────────────────────────────────────────────────────────
@@ -18,20 +19,19 @@ _conversation_history = []
 MAX_HISTORY = 10
 
 # ── Voice config ──────────────────────────────────────────────────────────
-VOICE = "en-IN-NeerjaNeural"   # Indian female — faster than Expressive
+VOICE = "en-IN-NeerjaNeural"
 RATE  = "+20%"
 PITCH = "+0Hz"
 
-# ── Audio cache — common phrases play instantly ───────────────────────────
+# ── Audio cache — only for fixed phrases, never for Gemini responses ──────
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tts_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  SPEAK — Edge TTS with cache + pyttsx3 fallback
+#  SPEAK
 # ════════════════════════════════════════════════════════════════════════════
 async def _generate_audio(text):
-    """Generate audio bytes using Edge TTS."""
     communicate = edge_tts.Communicate(text, voice=VOICE, rate=RATE, pitch=PITCH)
     audio_bytes = b""
     async for chunk in communicate.stream():
@@ -43,13 +43,11 @@ async def _generate_audio(text):
 
 
 def _get_cache_path(text):
-    """Get cache file path for a given text."""
     key = hashlib.md5(f"{VOICE}{RATE}{text}".encode()).hexdigest()
     return os.path.join(CACHE_DIR, f"{key}.mp3")
 
 
 def _play_audio_bytes(audio_bytes):
-    """Play audio from bytes using pygame."""
     global _interrupted
     audio_io = io.BytesIO(audio_bytes)
     pygame.mixer.music.load(audio_io, "mp3")
@@ -61,7 +59,11 @@ def _play_audio_bytes(audio_bytes):
         time.sleep(0.05)
 
 
-def speak(text):
+def speak(text, use_cache=True):
+    """
+    use_cache=True  → fixed phrases — saved to disk, instant on repeat
+    use_cache=False → Gemini responses — never saved to disk
+    """
     global _interrupted, _paused_text
 
     text = str(text).strip()
@@ -81,18 +83,18 @@ def speak(text):
     try:
         pygame.mixer.init(frequency=24000)
 
-        if os.path.exists(cache_path):
-            # ── Cache hit — play instantly! ───────────────────────────────
+        if use_cache and os.path.exists(cache_path):
+            # Cache hit — play instantly
             print(f"[speak] Cache hit")
             with open(cache_path, "rb") as f:
                 audio_bytes = f.read()
         else:
-            # ── Generate via Edge TTS ─────────────────────────────────────
+            # Generate via Edge TTS
             print(f"[speak] Generating audio...")
             audio_bytes = asyncio.run(_generate_audio(text))
 
-            # Save to cache for next time
-            if audio_bytes:
+            # Only save to cache for fixed phrases
+            if use_cache and audio_bytes:
                 with open(cache_path, "wb") as f:
                     f.write(audio_bytes)
 
@@ -101,11 +103,10 @@ def speak(text):
 
     except Exception as e:
         print(f"[speak] Edge TTS error: {e} — falling back to pyttsx3")
-        # Fallback to pyttsx3 (Zira — instant, no network)
         try:
             engine = pyttsx3.init('sapi5')
             voices = engine.getProperty('voices')
-            engine.setProperty('voice', voices[1].id)  # Zira
+            engine.setProperty('voice', voices[1].id)
             engine.setProperty('rate', 185)
             engine.setProperty('volume', 1.0)
             engine.say(text)
@@ -135,21 +136,19 @@ def speak_resume():
         speak(remaining)
 
 
-# ── Pre-cache common phrases at startup ──────────────────────────────────
+# ── Pre-cache fixed phrases at startup ───────────────────────────────────
 def precache_common_phrases():
-    """Pre-generate audio for common phrases so they play instantly."""
     phrases = [
-        "listening....",
         "Hello, Welcome Sir, How can I Help You",
-        "Opening WhatsApp",
-        "Sure, what would you like to know?",
         "Okay, see you later!",
-        "Sorry, something went wrong!",
         "Fresh start! What's on your mind?",
         "Should I use WhatsApp or mobile?",
         "What should I say?",
+        "Opening WhatsApp",
+        "Sure, continuing!",
+        "Nothing to continue!",
+        "Oops, something went wrong!",
     ]
-
     def _cache():
         for phrase in phrases:
             cache_path = _get_cache_path(phrase)
@@ -162,11 +161,7 @@ def precache_common_phrases():
                         print(f"[Cache] Cached: {phrase[:40]}")
                 except:
                     pass
-
-    # Run in background so startup isn't delayed
-    import threading
     threading.Thread(target=_cache, daemon=True).start()
-    print("[Cache] Pre-caching common phrases in background...")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -216,6 +211,7 @@ def extract_app_name(query, *remove_words):
 
 # ════════════════════════════════════════════════════════════════════════════
 #  AI CONVERSATION — Gemini streams, speaks sentence by sentence
+#  use_cache=False — Gemini responses never saved to disk
 # ════════════════════════════════════════════════════════════════════════════
 def chat_with_nora(query):
     global _conversation_history
@@ -252,16 +248,15 @@ Remember the conversation context and refer back to it naturally."""
             buffer += chunk_text
             full_reply += chunk_text
 
-            # Speak complete sentences immediately
             sentences = re.split(r'(?<=[.!?])\s+', buffer)
             if len(sentences) > 1:
                 to_speak = " ".join(sentences[:-1]).strip()
                 buffer = sentences[-1]
                 if to_speak:
-                    speak(to_speak)
+                    speak(to_speak, use_cache=False)  # ← never cache Gemini
 
         if buffer.strip() and not _interrupted:
-            speak(buffer.strip())
+            speak(buffer.strip(), use_cache=False)    # ← never cache Gemini
 
         _conversation_history.append({"role": "model", "parts": [full_reply]})
 
@@ -271,7 +266,7 @@ Remember the conversation context and refer back to it naturally."""
             genai.configure(api_key=LLM_KEY)
             model = genai.GenerativeModel("gemini-2.5-flash")
             response = model.generate_content(f"{system_prompt}\n\nUser: {query}\nNora:")
-            speak(markdown_to_text(response.text).strip())
+            speak(markdown_to_text(response.text).strip(), use_cache=False)  # ← never cache
         except:
             speak("Sorry, couldn't think of a response right now!")
 
@@ -339,14 +334,30 @@ def process_query(query):
             handleCodeGeneration(query)
             return True
 
-        elif any(w in query for w in ["volume up", "increase volume", "turn up"]):
-            from engine.system_controls import volumeUp
-            volumeUp()
+        elif any(w in query for w in ["volume up", "increase volume", "turn up volume", "increase the volume"]):
+            match = re.search(r'(\d+)', query)
+            if match:
+                from engine.system_controls import setVolume
+                setVolume(int(match.group()))
+            else:
+                from engine.system_controls import volumeUp
+                volumeUp()
             return True
 
-        elif any(w in query for w in ["volume down", "decrease volume", "turn down"]):
-            from engine.system_controls import volumeDown
-            volumeDown()
+        elif any(w in query for w in ["volume down", "decrease volume", "turn down volume", "decrease the volume"]):
+            match = re.search(r'(\d+)', query)
+            if match:
+                from engine.system_controls import setVolume
+                setVolume(int(match.group()))
+            else:
+                from engine.system_controls import volumeDown
+                volumeDown()
+            return True
+
+        elif "set volume" in query or "volume to" in query:
+            from engine.system_controls import setVolume
+            match = re.search(r'(\d+)', query)
+            setVolume(int(match.group()) if match else 50)
             return True
 
         elif "unmute" in query:
@@ -359,25 +370,29 @@ def process_query(query):
             muteVolume()
             return True
 
-        elif "set volume" in query:
-            from engine.system_controls import setVolume
-            match = re.search(r'\d+', query)
-            setVolume(int(match.group()) if match else 50)
+        elif any(w in query for w in ["brightness up", "increase brightness", "brighter", "increase the brightness"]):
+            match = re.search(r'(\d+)', query)
+            if match:
+                from engine.system_controls import setBrightness
+                setBrightness(int(match.group()))
+            else:
+                from engine.system_controls import brightnessUp
+                brightnessUp()
             return True
 
-        elif any(w in query for w in ["brightness up", "increase brightness", "brighter"]):
-            from engine.system_controls import brightnessUp
-            brightnessUp()
+        elif any(w in query for w in ["brightness down", "decrease brightness", "dimmer", "decrease the brightness"]):
+            match = re.search(r'(\d+)', query)
+            if match:
+                from engine.system_controls import setBrightness
+                setBrightness(int(match.group()))
+            else:
+                from engine.system_controls import brightnessDown
+                brightnessDown()
             return True
 
-        elif any(w in query for w in ["brightness down", "decrease brightness", "dimmer"]):
-            from engine.system_controls import brightnessDown
-            brightnessDown()
-            return True
-
-        elif "set brightness" in query:
+        elif "set brightness" in query or "brightness to" in query:
             from engine.system_controls import setBrightness
-            match = re.search(r'\d+', query)
+            match = re.search(r'(\d+)', query)
             setBrightness(int(match.group()) if match else 50)
             return True
 
@@ -453,8 +468,6 @@ def process_query(query):
 # ════════════════════════════════════════════════════════════════════════════
 @eel.expose
 def allCommands(message=1):
-
-    # Pre-cache common phrases on first run
     precache_common_phrases()
 
     if message == 1:

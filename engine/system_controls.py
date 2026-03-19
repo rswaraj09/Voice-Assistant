@@ -5,19 +5,18 @@ from engine.command import speak
 # ════════════════════════════════════════════════════════════════════════════
 
 def _get_volume_interface():
-    """Get Windows audio volume interface."""
     try:
         from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
         from comtypes import CLSCTX_ALL
-        import ctypes
+        from ctypes import cast, POINTER
         devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        volume = ctypes.cast(interface, ctypes.POINTER(IAudioEndpointVolume))
+        interface = devices._dev.Activate(          # ← _dev.Activate instead of .Activate
+            IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        volume = cast(interface, POINTER(IAudioEndpointVolume))
         return volume
     except Exception as e:
         print(f"[Volume] Could not get audio interface: {e}")
         return None
-
 
 def volumeUp(step: int = 10):
     """Increase system volume by step%."""
