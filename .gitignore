@@ -9,3 +9,5 @@ __pycache__
 .idea
 hotword
 tts_cache/
+win_app_cache.json
+app_cache.json
