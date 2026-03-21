@@ -244,23 +244,27 @@ def openApp(app_name):
             speak("Alright, no problem.")
         return False
 
-
 def _download_app(app_name):
     import pyautogui
     search_url = f"https://www.google.com/search?q={app_name.replace(' ', '+')}+download+for+windows"
     speak(f"Opening the download page for {app_name}.")
     webbrowser.open(search_url)
-    time.sleep(4)
+    time.sleep(4)  # wait for full page load
     try:
-        pyautogui.hotkey('ctrl', 'l')
-        time.sleep(0.4)
-        pyautogui.press('escape')
+        # Click on the page body first to give it focus
+        # Screen center is safe — avoids clicking any link
+        screen_width, screen_height = pyautogui.size()
+        pyautogui.click(screen_width // 2, screen_height // 2)
+        time.sleep(0.5)
+
+        # Now Tab once — focus moves to first link on page
+        pyautogui.press('tab')
         time.sleep(0.3)
-        for _ in range(7):
-            pyautogui.press('tab')
-            time.sleep(0.12)
+
+        # Enter to open it
         pyautogui.press('enter')
         time.sleep(2)
+
         speak(f"I've opened the download page for {app_name}. You can proceed with the installation.")
     except Exception as e:
         print(f"[download] Error: {e}")
