@@ -1,242 +1,678 @@
 import os
-import subprocess
 import re
+import json
+import subprocess
 import time
-import google.generativeai as genai
-from engine.config import ASSISTANT_NAME, LLM_KEY
-from engine.command import speak, takecommand
-
-#  VS Code executable path (adjust if needed) 
-VSCODE_PATH = r"code"  # works if VS Code is in PATH; else use full path like:
-# VSCODE_PATH = r"C:\Users\YourName\AppData\Local\Programs\Microsoft VS Code\Code.exe"
-
-#  Default save folder 
-DEFAULT_FOLDER = os.path.join(os.path.expanduser("~"), "Desktop", "VoiceOS_Projects")
-os.makedirs(DEFAULT_FOLDER, exist_ok=True)
+import threading
+import webbrowser
 
 
-#  STEP 1: Extract what the user wants to build
+# ════════════════════════════════════════════════════════════════════════════
+#  FULL-STACK PROJECT GENERATOR
+#  - Sequential file generation (no parallel)
+#  - 0.5s delay between files (avoids Gemini rate limiting)
+#  - 3 retries per file if generation fails
+#  - Guaranteed MongoDB connection injection
+#  - Removes in-memory fake DB lists Gemini generates
+#  - No csrf_token
+# ════════════════════════════════════════════════════════════════════════════
 
-def extract_code_intent(query: str) -> dict:
-    """
-    Parse the voice query to understand:
-    - What to build (e.g., 'login page', 'calculator', 'todo app')
-    - What language/type (html, python, js)
-    - Where to save it
-    - What to name the file
-    """
-    query = query.lower()
+def handleCodeGeneration(query):
+    from engine.command import speak, takecommand
+    from engine.config import LLM_KEY
+    import google.generativeai as genai
 
-    # Detect file type
-    if any(w in query for w in ["html", "webpage", "web page", "website", "login page", "landing page", "form"]):
-        file_type = "html"
-        extension = ".html"
-    elif any(w in query for w in ["python", "script", "calculator", "game"]):
-        file_type = "python"
-        extension = ".py"
-    elif any(w in query for w in ["javascript", "js", "node"]):
-        file_type = "javascript"
-        extension = ".js"
-    elif any(w in query for w in ["css", "style"]):
-        file_type = "css"
-        extension = ".css"
-    else:
-        file_type = "python"  # default
-        extension = ".py"
+    speak("Sure!")
 
-    # Detect what to build (remove common voice words)
-    remove = [ASSISTANT_NAME.lower(), "create", "make", "build", "generate", "write",
-              "a", "an", "the", "for", "me", "please", "code", "program",
-              "html", "python", "javascript", "js", "file", "page", "script"]
-    words = query.split()
-    intent_words = [w for w in words if w not in remove]
-    intent = " ".join(intent_words).strip()
+    # ── Ask where to save ─────────────────────────────────────────────────
+    speak("Where would you like to save this project?")
+    save_path_response = takecommand()
+    save_dir     = _parse_save_path(save_path_response)
+    stack        = _detect_stack(query)
+    project_name = _extract_project_name(query)
 
-    # Generate a clean filename from intent
-    filename_base = re.sub(r'[^a-z0-9_]', '_', intent.replace(" ", "_"))
-    filename_base = filename_base.strip("_") or "generated_code"
-    filename = filename_base + extension
+    speak(f"Saving to {save_dir}. Generating all files now.")
+    print(f"[CodeGen] Project: {project_name} | Stack: {stack['backend']} + {stack['database']}")
 
-    return {
-        "intent": intent or query,
-        "file_type": file_type,
-        "extension": extension,
-        "filename": filename,
-        "original_query": query
+    genai.configure(api_key=LLM_KEY)
+
+    file_specs      = _get_file_specs(query, stack, project_name)
+    generated_files = {}
+    total           = len(file_specs)
+
+    # ── Generate all files sequentially ──────────────────────────────────
+    speak("Generating project files.")
+
+    for i, spec in enumerate(file_specs, 1):
+        name, prompt = spec
+        print(f"[CodeGen] Generating {i}/{total}: {name}")
+
+        # Pre-filled config files — instant, no Gemini needed
+        if prompt.startswith("PREFILLED:"):
+            generated_files[name] = prompt[10:]
+            print(f"[CodeGen] ✓ {name} (pre-filled)")
+            continue
+
+        # Generate with up to 3 retries
+        for attempt in range(1, 4):
+            try:
+                model   = genai.GenerativeModel("gemini-2.5-flash")
+                resp    = model.generate_content(prompt)
+                content = resp.text.strip()
+
+                # Strip markdown code fences if present
+                content = re.sub(r'^```\w*\s*\n?', '', content)
+                content = re.sub(r'\n?```\s*$',    '', content)
+                content = content.strip()
+
+                if len(content) < 50:
+                    raise ValueError(f"Response too short ({len(content)} chars)")
+
+                generated_files[name] = content
+                print(f"[CodeGen] ✓ {name} (attempt {attempt})")
+                break
+
+            except Exception as e:
+                print(f"[CodeGen] ✗ {name} attempt {attempt}/3: {e}")
+                if attempt < 3:
+                    time.sleep(2)
+
+        # Small delay between files to avoid Gemini rate limiting
+        time.sleep(0.5)
+
+    print(f"[CodeGen] Generated {len(generated_files)}/{total} files.")
+
+    if not generated_files:
+        speak("Sorry, generation failed completely. Please try again.")
+        return
+
+    # ── Inject guaranteed MongoDB connection into backend ─────────────────
+    backend_file = stack["backend_file"]
+    if backend_file in generated_files:
+        generated_files[backend_file] = _inject_mongo_connection(
+            generated_files[backend_file], stack["lang"], project_name
+        )
+        print(f"[CodeGen] MongoDB connection injected into {backend_file}")
+
+    # ── Build project data ────────────────────────────────────────────────
+    project_data = {
+        "project_name":    project_name,
+        "description":     query,
+        "tech_stack":      stack,
+        "files":           [{"path": k, "content": v} for k, v in generated_files.items()],
+        "run_command":     stack["run_command"],
+        "install_command": stack["install_command"],
+        "start_url":       "http://localhost:5000",
+        "notes":           f"MongoDB database: {project_name} | mongodb://localhost:27017/{project_name}"
     }
 
+    # ── Create project files ──────────────────────────────────────────────
+    project_dir = os.path.join(save_dir, project_name)
+    speak(f"Creating {len(generated_files)} files.")
+    success = _create_project_files(project_dir, project_data)
 
-#  STEP 2: Generate code using Gemini AI
+    if not success:
+        speak("Sorry, I had trouble creating the files. Please check folder permissions.")
+        return
 
-def generate_code_with_ai(intent: str, file_type: str) -> str:
-    """Use Gemini to generate clean, working code."""
-    try:
-        genai.configure(api_key=LLM_KEY)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+    speak(f"Project created with {len(generated_files)} files.")
 
-        prompt = f"""You are an expert {file_type} developer. 
-Generate complete, working, well-commented {file_type} code for: {intent}
+    # ── Install dependencies ──────────────────────────────────────────────
+    install_cmd = stack["install_command"]
+    if install_cmd:
+        speak("Installing dependencies.")
+        try:
+            subprocess.run(install_cmd, shell=True, cwd=project_dir, timeout=120)
+            speak("Done.")
+        except subprocess.TimeoutExpired:
+            speak("Installation is taking long. It will continue in background.")
+        except Exception as e:
+            print(f"[CodeGen] Install error: {e}")
+            speak("Installation may need manual check.")
 
-Rules:
-- Return ONLY the raw code, no markdown, no backticks, no explanation
-- Make it fully functional and ready to run
-- Add helpful comments in the code
-- For HTML: include CSS styling inside the file (no external files needed)
-- For Python: include if __name__ == '__main__': block
-- Make it look professional and modern
-"""
-        response = model.generate_content(prompt)
-        code = response.text.strip()
-
-        # Remove markdown code blocks if Gemini adds them anyway
-        code = re.sub(r'^```[a-z]*\n?', '', code)
-        code = re.sub(r'\n?```$', '', code)
-
-        return code.strip()
-
-    except Exception as e:
-        print(f"[CodeGen Error] {e}")
-        speak("Sorry, I had trouble generating the code. Please check your API key.")
-        return None
-
-
-#  STEP 3: Ask where to save the file
-
-def get_save_location(filename: str) -> str:
-    """Ask user where to save the file via voice."""
-    speak(f"Where should I save the file? Say Desktop, Documents, or a folder name. Or say default to save on Desktop.")
-    location_query = takecommand()
-
-    if not location_query or "default" in location_query or location_query.strip() == "":
-        folder = DEFAULT_FOLDER
-    elif "desktop" in location_query:
-        folder = os.path.join(os.path.expanduser("~"), "Desktop")
-    elif "document" in location_query:
-        folder = os.path.join(os.path.expanduser("~"), "Documents")
-    elif "download" in location_query:
-        folder = os.path.join(os.path.expanduser("~"), "Downloads")
+    # ── Open in VS Code ───────────────────────────────────────────────────
+    speak("Open in VS Code?")
+    if _yes(takecommand()):
+        _open_in_vscode(project_dir)
+        speak("Opened.")
     else:
-        # Try to use what they said as a folder name on Desktop
-        folder_name = location_query.strip().replace(" ", "_")
-        folder = os.path.join(os.path.expanduser("~"), "Desktop", folder_name)
-        os.makedirs(folder, exist_ok=True)
+        speak("No problem.")
 
-    return os.path.join(folder, filename)
+    # ── Run server ────────────────────────────────────────────────────────
+    run_cmd   = stack["run_command"]
+    start_url = "http://localhost:5000"
+
+    speak("Start the server?")
+    if _yes(takecommand()):
+        speak(f"Starting server and opening {start_url}.")
+        _run_server(run_cmd, project_dir, start_url)
+    else:
+        speak(f"When ready, run: {run_cmd} in the project folder.")
+
+    speak(f"MongoDB database name is {project_name}. Make sure MongoDB is running.")
+    speak("Project is ready!")
 
 
-#  STEP 4: Save the file
+# ════════════════════════════════════════════════════════════════════════════
+#  INJECT GUARANTEED MONGODB CONNECTION
+#  Also removes any in-memory fake database lists Gemini generates
+#  (e.g. users = [...], rooms = [...]) that would overwrite db collections
+# ════════════════════════════════════════════════════════════════════════════
+def _inject_mongo_connection(code, lang, project_name):
+    if lang == "flask":
+        mongo_block = f"""
+# ── MongoDB Connection ────────────────────────────────────────────────────
+from pymongo import MongoClient
+import bcrypt
 
-def save_code_to_file(code: str, filepath: str) -> bool:
-    """Save generated code to the specified file path."""
+MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
+DB_NAME   = os.getenv('DB_NAME',   '{project_name}')
+
+try:
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    client.server_info()
+    db    = client[DB_NAME]
+    users = db['users']
+    print(f"[MongoDB] Connected to database: {{DB_NAME}}")
+except Exception as e:
+    print(f"[MongoDB] Connection failed: {{e}}")
+    print("[MongoDB] Make sure MongoDB is running: net start MongoDB")
+# ─────────────────────────────────────────────────────────────────────────
+"""
+        # ── Remove existing connection code ───────────────────────────────
+        code = re.sub(r'.*MongoClient.*\n',        '', code)
+        code = re.sub(r'.*client\s*=\s*Mongo.*\n', '', code)
+        code = re.sub(r'.*db\s*=\s*client\[.*\n',  '', code)
+        code = re.sub(r'.*users\s*=\s*db\[.*\n',   '', code)
+        code = re.sub(r'.*import pymongo.*\n',      '', code)
+        code = re.sub(r'.*from pymongo.*\n',        '', code)
+        code = re.sub(r'.*import bcrypt.*\n',       '', code)
+
+        # ── Remove in-memory fake database lists Gemini generates ─────────
+        # These lists overwrite the real MongoDB collections if not removed
+        # e.g. users = [...], rooms = [...], bookings = [...]
+        code = re.sub(r'^users\s*=\s*\[.*?\]',    '', code, flags=re.DOTALL | re.MULTILINE)
+        code = re.sub(r'^rooms\s*=\s*\[.*?\]',    '', code, flags=re.DOTALL | re.MULTILINE)
+        code = re.sub(r'^bookings\s*=\s*\[.*?\]', '', code, flags=re.DOTALL | re.MULTILINE)
+        code = re.sub(r'^products\s*=\s*\[.*?\]', '', code, flags=re.DOTALL | re.MULTILINE)
+        code = re.sub(r'^orders\s*=\s*\[.*?\]',   '', code, flags=re.DOTALL | re.MULTILINE)
+        code = re.sub(r'^students\s*=\s*\[.*?\]', '', code, flags=re.DOTALL | re.MULTILINE)
+        code = re.sub(r'^employees\s*=\s*\[.*?\]','', code, flags=re.DOTALL | re.MULTILINE)
+        code = re.sub(r'^items\s*=\s*\[.*?\]',    '', code, flags=re.DOTALL | re.MULTILINE)
+
+        # Remove simulated/in-memory database comment blocks
+        code = re.sub(r'#\s*[-–—=]+\s*[Ss]imulat.*?#\s*[-–—=]+\s*\n', '', code, flags=re.DOTALL)
+        code = re.sub(r'#.*[Ii]n-[Mm]emory.*\n',  '', code)
+        code = re.sub(r'#.*[Ss]imulat.*\n',        '', code)
+        code = re.sub(r'#.*[Ff]ake\s*[Dd]ata.*\n', '', code)
+
+        # Remove fake ID counter variables
+        code = re.sub(r'^\w+_id_counter\s*=.*\n', '', code, flags=re.MULTILINE)
+        code = re.sub(r'^user_id_counter\s*=.*\n', '', code, flags=re.MULTILINE)
+        code = re.sub(r'^room_id_counter\s*=.*\n', '', code, flags=re.MULTILINE)
+        code = re.sub(r'^booking_id_counter\s*=.*\n', '', code, flags=re.MULTILINE)
+
+        # Remove helper functions that use in-memory lists
+        code = re.sub(r'def is_logged_in\(\).*?(?=\ndef |\n@app)', '', code, flags=re.DOTALL)
+        code = re.sub(r'def get_current_user\(\).*?(?=\ndef |\n@app)', '', code, flags=re.DOTALL)
+        code = re.sub(r'def is_admin\(\).*?(?=\ndef |\n@app)', '', code, flags=re.DOTALL)
+
+        # ── Guaranteed login route ─────────────────────────────────────────
+        login_fix = '''
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        email    = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+        user     = users.find_one({'email': email})
+        if user and bcrypt.checkpw(password.encode('utf-8'), user['password']):
+            session['user_id'] = str(user['_id'])
+            session['name']    = user.get('name', 'User')
+            session['role']    = user.get('role', 'user')
+            if session['role'] == 'admin':
+                return redirect(url_for('admin_dashboard'))
+            return redirect(url_for('dashboard'))
+        flash('Invalid email or password. Please try again.', 'danger')
+        return redirect(url_for('login'))
+    return render_template('login.html')
+'''
+        # ── Guaranteed signup route ────────────────────────────────────────
+        signup_fix = '''
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        name     = request.form.get('name', '').strip()
+        email    = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+        role     = request.form.get('role', 'user')
+        if users.find_one({'email': email}):
+            flash('Email already registered. Please login.', 'danger')
+            return redirect(url_for('signup'))
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        users.insert_one({'name': name, 'email': email, 'password': hashed, 'role': role})
+        flash('Account created successfully! Please login.', 'success')
+        return redirect(url_for('login'))
+    return render_template('signup.html')
+'''
+        # Replace Gemini login/signup with guaranteed versions
+        code = re.sub(
+            r'@app\.route\([\'\"]/login.*?(?=@app\.route|if __name__)',
+            login_fix + '\n\n', code, flags=re.DOTALL
+        )
+        code = re.sub(
+            r'@app\.route\([\'\"]/signup.*?(?=@app\.route|if __name__)',
+            signup_fix + '\n\n', code, flags=re.DOTALL
+        )
+
+        # Inject mongo block after last import line
+        lines       = code.split('\n')
+        last_import = 0
+        for i, line in enumerate(lines):
+            if line.strip().startswith('import ') or line.strip().startswith('from '):
+                last_import = i
+        lines.insert(last_import + 1, mongo_block)
+        return '\n'.join(lines)
+
+    elif lang == "node":
+        mongo_block = f"""
+// ── MongoDB Connection ──────────────────────────────────────────────────
+const mongoose = require('mongoose');
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/';
+const DB_NAME   = process.env.DB_NAME   || '{project_name}';
+mongoose.connect(MONGO_URI + DB_NAME)
+    .then(() => console.log('[MongoDB] Connected to database:', DB_NAME))
+    .catch(err => {{
+        console.error('[MongoDB] Connection failed:', err.message);
+        console.log('[MongoDB] Make sure MongoDB is running');
+    }});
+// ────────────────────────────────────────────────────────────────────────
+"""
+        code = re.sub(r'mongoose\.connect\(.*?\);?\n', '', code, flags=re.DOTALL)
+        code = re.sub(r'.*require\([\'"]mongoose[\'"]\).*\n', '', code)
+
+        lines        = code.split('\n')
+        last_require = 0
+        for i, line in enumerate(lines):
+            if 'require(' in line:
+                last_require = i
+        lines.insert(last_require + 1, mongo_block)
+        return '\n'.join(lines)
+
+    return code
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  DETECT TECH STACK
+# ════════════════════════════════════════════════════════════════════════════
+def _detect_stack(query):
+    q = query.lower()
+    if "node" in q or "express" in q:
+        return {
+            "frontend": "HTML5/CSS3/JS", "backend": "Node.js Express", "database": "MongoDB",
+            "backend_file": "server.js", "run_command": "node server.js",
+            "install_command": "npm install express mongoose bcryptjs express-session dotenv",
+            "lang": "node"
+        }
+    elif "django" in q:
+        return {
+            "frontend": "Django Templates", "backend": "Python Django", "database": "SQLite",
+            "backend_file": "manage.py", "run_command": "python manage.py runserver",
+            "install_command": "pip install django", "lang": "django"
+        }
+    elif "php" in q:
+        return {
+            "frontend": "HTML5/CSS3/JS", "backend": "PHP", "database": "MySQL",
+            "backend_file": "index.php", "run_command": "php -S localhost:5000",
+            "install_command": "", "lang": "php"
+        }
+    else:
+        return {
+            "frontend": "HTML5/CSS3/JS", "backend": "Python Flask", "database": "MongoDB",
+            "backend_file": "app.py", "run_command": "python app.py",
+            "install_command": "pip install flask pymongo flask-session bcrypt python-dotenv",
+            "lang": "flask"
+        }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  FILE SPECS — focused prompts per file
+# ════════════════════════════════════════════════════════════════════════════
+def _get_file_specs(query, stack, project_name):
+    lang = stack["lang"]
+
+    if lang == "flask":
+        backend_prompt = f"""Write a complete Flask backend Python file for: "{query}"
+
+Include these exact imports at the top:
+import os
+from flask import Flask, render_template, request, redirect, url_for, session, flash
+from dotenv import load_dotenv
+load_dotenv()
+app = Flask(__name__)
+app.secret_key = os.getenv('SECRET_KEY', 'fallback-key')
+
+Include ALL these routes:
+- GET /  → render_template('index.html')
+- GET /login, POST /login
+- GET /signup, POST /signup
+- GET /logout → session.clear(), redirect to /
+- GET /dashboard → check session['user_id'], render dashboard.html
+- GET /admin_dashboard → check session + role == admin, render admin.html
+- Any additional routes relevant to: "{query}"
+
+CRITICAL RULES:
+- DO NOT create any Python lists like users = [...] or rooms = [...] or bookings = [...]
+- DO NOT create any in-memory fake database or simulated data
+- DO NOT create helper functions like is_logged_in(), get_current_user(), is_admin()
+- DO NOT include MongoClient, bcrypt imports or db connection (added automatically)
+- DO NOT use csrf_token anywhere
+- Use flash() for all user messages
+- Use session['user_id'] to check authentication in protected routes
+- End with: if __name__ == '__main__': app.run(debug=True)
+
+Return ONLY complete Python code, no markdown."""
+
+    elif lang == "node":
+        backend_prompt = f"""Write a complete Express.js backend for: "{query}"
+Include all auth and feature routes.
+DO NOT include mongoose.connect (added automatically).
+DO NOT create any in-memory arrays or fake data.
+app.listen(process.env.PORT || 5000);
+Return ONLY JavaScript, no markdown."""
+    else:
+        backend_prompt = f"Write complete {stack['backend']} backend for: '{query}'. Return ONLY code."
+
+    login_prompt = f"""Write a COMPLETE login page HTML file for a {query} system.
+
+Requirements:
+- Full HTML document: <!DOCTYPE html>, <html>, <head> with charset and title, <body>
+- ALL CSS must be inside a <style> tag in <head>
+- Beautiful modern login form design with good colors
+- Email input: <input type="email" name="email" required>
+- Password input: <input type="password" name="password" required>
+- Show/hide password toggle button with eye icon
+- Flash message display using Jinja2 EXACTLY like this (NO csrf_token):
+  {{% with messages = get_flashed_messages(with_categories=true) %}}
+    {{% for category, message in messages %}}
+      <div class="alert alert-{{{{ category }}}}">{{{{ message }}}}</div>
+    {{% endfor %}}
+  {{% endwith %}}
+- .alert-danger = red background, .alert-success = green background
+- Submit button
+- Link to signup: <a href="/signup">Create account</a>
+- Form tag: <form method="POST" action="/login">
+- Closing </body> and </html> tags
+
+Return ONLY the complete HTML file, no explanation, no markdown."""
+
+    signup_prompt = f"""Write a COMPLETE signup/registration HTML file for a {query} system.
+
+Requirements:
+- Full HTML document with ALL CSS in <style> tag
+- Beautiful modern signup form
+- Full Name: <input type="text" name="name" required>
+- Email: <input type="email" name="email" required>
+- Password: <input type="password" name="password" required>
+- Confirm Password: <input type="password" name="confirm_password" required>
+- Role dropdown: <select name="role"><option value="user">User</option><option value="admin">Admin</option></select>
+- Flash message display (same Jinja2 pattern, NO csrf_token)
+- JavaScript to check passwords match before submit
+- <form method="POST" action="/signup">
+- Link to login: <a href="/login">Already have account? Login</a>
+- Closing </body></html>
+
+Return ONLY the complete HTML file, no explanation, no markdown."""
+
+    index_prompt = f"""Write a COMPLETE homepage HTML file for a {query} system.
+
+Requirements:
+- Full HTML document with ALL CSS in <style> tag
+- Professional navigation bar with: site name/logo, Login button (/login), Signup button (/signup)
+- Hero section: title, subtitle, call-to-action buttons
+- Features section: 3-4 feature cards describing the system
+- Footer with copyright
+- Modern professional design with good color scheme
+- Closing </body></html>
+
+Return ONLY the complete HTML file, no explanation, no markdown."""
+
+    dashboard_prompt = f"""Write a COMPLETE user dashboard HTML file for a {query} system.
+
+Requirements:
+- Full HTML document with ALL CSS in <style> tag
+- Top navbar: site name | Welcome {{{{ session.get('name', 'User') }}}} | Logout link (/logout)
+- Sidebar with navigation menu relevant to: "{query}"
+- Main content: 3-4 stat cards, recent activity section, relevant widgets
+- Professional dashboard design (dark sidebar, light content area)
+- Closing </body></html>
+
+Return ONLY the complete HTML file, no explanation, no markdown."""
+
+    admin_prompt = f"""Write a COMPLETE admin dashboard HTML file for a {query} system.
+
+Requirements:
+- Full HTML document with ALL CSS in <style> tag
+- Top navbar: site name | Admin badge | {{{{ session.get('name', 'Admin') }}}} | Logout (/logout)
+- Sidebar: Dashboard, Manage Users, All Records, Reports, Settings
+- Stats cards: Total Users, Active Sessions, Total Records, Revenue (if applicable)
+- Users table with columns: Name, Email, Role, Date Joined, Actions
+- Professional admin panel design
+- Closing </body></html>
+
+Return ONLY the complete HTML file, no explanation, no markdown."""
+
+    css_prompt = f"""Write a COMPLETE CSS stylesheet for a {query} web application.
+
+Include ALL of these:
+- CSS reset: *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+- Root variables: --primary, --secondary, --danger, --success, --bg, --text
+- Body base styles and typography
+- .navbar styles with flexbox layout
+- .btn, .btn-primary, .btn-secondary, .btn-danger styles
+- .form-group, .form-control, .form-label styles
+- .card, .card-header, .card-body styles
+- .alert, .alert-danger {{ background: #f8d7da; color: #721c24; }}, .alert-success {{ background: #d4edda; color: #155724; }} styles
+- .sidebar styles for dashboard layout
+- .main-content styles
+- .stat-card styles with icons
+- .table, .table-striped styles
+- Responsive @media (max-width: 768px) rules
+
+Return ONLY CSS code, no markdown."""
+
+    js_prompt = f"""Write COMPLETE JavaScript for a {query} web application.
+
+Include:
+- DOMContentLoaded event listener wrapper
+- Email format validation (regex test)
+- Password length check (minimum 6 characters)
+- Confirm password match validation on signup
+- Show/hide password toggle function (toggles input type between password and text)
+- Auto-hide flash/alert messages after 4 seconds with fadeOut effect
+- Form submit validation that prevents submission if required fields are empty
+- Any interactive features specific to: "{query}"
+
+Return ONLY JavaScript code, no markdown."""
+
+    # Config files — pre-filled, no Gemini needed
+    if lang == "flask":
+        config = [
+            ("requirements.txt", "PREFILLED:flask\npymongo\nbcrypt\nflask-session\npython-dotenv\ndnspython"),
+            (".env", f"PREFILLED:MONGO_URI=mongodb://localhost:27017/\nDB_NAME={project_name}\nSECRET_KEY=nora-super-secret-key-change-in-production\nDEBUG=True"),
+        ]
+    elif lang == "node":
+        pkg = json.dumps({
+            "name": project_name, "version": "1.0.0", "main": "server.js",
+            "scripts": {"start": "node server.js"},
+            "dependencies": {
+                "express": "^4.18.0", "mongoose": "^7.0.0",
+                "bcryptjs": "^2.4.3", "express-session": "^1.17.3", "dotenv": "^16.0.0"
+            }
+        }, indent=2)
+        config = [
+            ("package.json", f"PREFILLED:{pkg}"),
+            (".env", f"PREFILLED:MONGO_URI=mongodb://localhost:27017/\nDB_NAME={project_name}\nSECRET_KEY=nora-super-secret-key\nPORT=5000"),
+        ]
+    else:
+        config = [(".env", f"PREFILLED:MONGO_URI=mongodb://localhost:27017/\nDB_NAME={project_name}\nSECRET_KEY=nora-super-secret-key")]
+
+    return [
+        (stack["backend_file"],       backend_prompt),
+        ("templates/index.html",      index_prompt),
+        ("templates/login.html",      login_prompt),
+        ("templates/signup.html",     signup_prompt),
+        ("templates/dashboard.html",  dashboard_prompt),
+        ("templates/admin.html",      admin_prompt),
+        ("static/css/style.css",      css_prompt),
+        ("static/js/main.js",         js_prompt),
+    ] + config
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  EXTRACT PROJECT NAME
+# ════════════════════════════════════════════════════════════════════════════
+def _extract_project_name(query):
+    match = re.search(
+        r'(?:create|make|build|generate)\s+(?:a\s+|an\s+)?(.+?)(?:\s+in\s+|\s+using\s+|\s+with\s+|$)',
+        query, re.IGNORECASE
+    )
+    if match:
+        name = match.group(1).strip().lower()
+        name = re.sub(r'[^a-z0-9\s]', '', name)
+        return name.replace(' ', '_')[:40]
+    return "my_project"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  PARSE SAVE PATH FROM VOICE
+# ════════════════════════════════════════════════════════════════════════════
+def _parse_save_path(response):
+    if not response:
+        return os.path.join("D:\\", "Projects")
+    response = response.lower().strip()
+
+    path_match = re.search(r'[a-z]:\\[\w\\]+', response, re.IGNORECASE)
+    if path_match:
+        return path_match.group()
+
+    if "desktop"  in response: return os.path.join(os.path.expanduser("~"), "Desktop",   "Projects")
+    if "document" in response: return os.path.join(os.path.expanduser("~"), "Documents", "Projects")
+    if "download" in response: return os.path.join(os.path.expanduser("~"), "Downloads", "Projects")
+
+    drive_match = re.search(r'\b([a-z])\s*(?:drive|disk)?\b', response)
+    if drive_match:
+        drive = drive_match.group(1).upper()
+        folder_match = re.search(r'(?:in|inside|folder|at)\s+(\w+)', response)
+        if folder_match:
+            return os.path.join(f"{drive}:\\", folder_match.group(1), "Projects")
+        return os.path.join(f"{drive}:\\", "Projects")
+
+    return os.path.join("D:\\", "Projects")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  CREATE ALL PROJECT FILES
+# ════════════════════════════════════════════════════════════════════════════
+def _create_project_files(project_dir, project_data):
     try:
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(code)
-        print(f"[CodeGen] File saved: {filepath}")
+        os.makedirs(project_dir, exist_ok=True)
+        project_name = project_data["project_name"]
+
+        for file_info in project_data.get("files", []):
+            file_path = file_info.get("path", "").strip()
+            content   = file_info.get("content", "")
+            if not file_path:
+                continue
+            if content.startswith("PREFILLED:"):
+                content = content[10:]
+            full_path = os.path.join(project_dir, file_path)
+            dir_path  = os.path.dirname(full_path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
+            with open(full_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            print(f"[CodeGen] Created: {file_path}")
+
+        # README
+        tech  = project_data["tech_stack"]
+        readme = f"""# {project_name.replace('_', ' ').title()}
+
+{project_data.get('description', '')}
+
+## Tech Stack
+| Layer    | Technology |
+|----------|------------|
+| Frontend | {tech.get('frontend', '')} |
+| Backend  | {tech.get('backend', '')} |
+| Database | {tech.get('database', '')} |
+
+## Database Setup
+- Install MongoDB: https://www.mongodb.com/try/download/community
+- Start MongoDB (Windows): `net start MongoDB`
+- **Database name:** `{project_name}`
+- **Connection:** `mongodb://localhost:27017/{project_name}`
+- Collections are created automatically on first signup
+
+## Installation
+```bash
+{project_data.get('install_command', '')}
+```
+
+## Run
+```bash
+{project_data.get('run_command', '')}
+```
+
+Open: **http://localhost:5000**
+
+## Default Accounts
+Create accounts via the signup page.
+Select **Admin** role to access the admin dashboard.
+
+## Notes
+{project_data.get('notes', '')}
+"""
+        with open(os.path.join(project_dir, "README.md"), 'w', encoding='utf-8') as f:
+            f.write(readme)
+        print("[CodeGen] Created: README.md")
         return True
+
+    except PermissionError as e:
+        print(f"[CodeGen] Permission error: {e}")
+        return False
     except Exception as e:
-        print(f"[CodeGen] Save error: {e}")
-        speak("I had trouble saving the file.")
+        print(f"[CodeGen] Error: {e}")
         return False
 
 
-#  STEP 5: Open in VS Code
+# ════════════════════════════════════════════════════════════════════════════
+#  HELPERS
+# ════════════════════════════════════════════════════════════════════════════
+def _yes(response):
+    if not response:
+        return False
+    return any(w in response.lower() for w in
+               ["yes", "yeah", "sure", "okay", "ok", "please", "yep", "open", "run", "start", "do it"])
 
-def open_in_vscode(filepath: str):
-    """Open the generated file in VS Code."""
+
+def _open_in_vscode(project_dir):
     try:
-        speak("Opening the file in VS Code.")
-        subprocess.Popen([VSCODE_PATH, filepath])
-        time.sleep(2)
-        print(f"[CodeGen] Opened in VS Code: {filepath}")
-    except FileNotFoundError:
-        # Try with full common path
-        try:
-            vscode_full = r"C:\Users\{}\AppData\Local\Programs\Microsoft VS Code\Code.exe".format(
-                os.environ.get("USERNAME", ""))
-            subprocess.Popen([vscode_full, filepath])
-        except Exception as e:
-            print(f"[CodeGen] VS Code not found: {e}")
-            speak("I couldn't open VS Code. Please open the file manually.")
-    except Exception as e:
-        print(f"[CodeGen] VS Code error: {e}")
-        speak("There was an issue opening VS Code.")
-
-
-#  STEP 6: Run the code
-
-def run_code(filepath: str, file_type: str):
-    """Run the generated code based on its type."""
-    try:
-        speak("Running the code now.")
-
-        if file_type == "python":
-            subprocess.Popen(["python", filepath], creationflags=subprocess.CREATE_NEW_CONSOLE)
-            speak("Python script is now running in a new terminal window.")
-
-        elif file_type == "html":
-            os.startfile(filepath)  # Opens in default browser
-            speak("Opening the HTML file in your browser.")
-
-        elif file_type == "javascript":
-            subprocess.Popen(["node", filepath], creationflags=subprocess.CREATE_NEW_CONSOLE)
-            speak("JavaScript file is running with Node.js.")
-
+        subprocess.run(f'code "{project_dir}"', shell=True, timeout=5)
+    except Exception:
+        local  = os.environ.get("LOCALAPPDATA", "")
+        vscode = os.path.join(local, "Programs", "Microsoft VS Code", "Code.exe")
+        if os.path.exists(vscode):
+            subprocess.Popen([vscode, project_dir])
         else:
-            os.startfile(filepath)
-            speak("File opened.")
-
-    except Exception as e:
-        print(f"[CodeGen] Run error: {e}")
-        speak("I couldn't run the file automatically. Please run it manually.")
+            subprocess.Popen(f'explorer "{project_dir}"', shell=True)
 
 
-#  MAIN FUNCTION — call this from command.py
-
-def handleCodeGeneration(query: str):
-    """
-    Full pipeline:
-    1. Understand what to build
-    2. Generate code with AI
-    3. Ask where to save
-    4. Save file
-    5. Open in VS Code
-    6. Ask if user wants to run it
-    """
-    speak("Sure! Let me generate the code for you. One moment...")
-
-    # Step 1: Understand intent
-    intent_data = extract_code_intent(query)
-    speak(f"I'll create a {intent_data['file_type']} file for {intent_data['intent']}.")
-
-    # Step 2: Generate code
-    code = generate_code_with_ai(intent_data["intent"], intent_data["file_type"])
-    if not code:
-        return
-
-    speak("Code generated successfully!")
-
-    # Step 3: Ask where to save
-    filepath = get_save_location(intent_data["filename"])
-
-    # Step 4: Save file
-    saved = save_code_to_file(code, filepath)
-    if not saved:
-        return
-
-    speak(f"File saved as {intent_data['filename']}")
-
-    # Step 5: Open in VS Code
-    speak("Should I open it in VS Code?")
-    response = takecommand()
-    if response and any(w in response for w in ["yes", "yeah", "sure", "open", "ok", "yep"]):
-        open_in_vscode(filepath)
-
-    # Step 6: Ask if they want to run it
-    time.sleep(1)
-    speak("Do you want me to run the code?")
-    run_response = takecommand()
-    if run_response and any(w in run_response for w in ["yes", "yeah", "sure", "run", "ok", "yep"]):
-        run_code(filepath, intent_data["file_type"])
-    else:
-        speak(f"Alright! Your file is saved at {filepath}. Let me know if you need anything else.")
+def _run_server(run_cmd, project_dir, start_url):
+    def _start():
+        subprocess.Popen(
+            f'start cmd /k "cd /d "{project_dir}" && {run_cmd}"',
+            shell=True
+        )
+        time.sleep(4)
+        webbrowser.open(start_url)
+    threading.Thread(target=_start, daemon=True).start()
