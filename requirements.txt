@@ -124,3 +124,6 @@ pyperclip
 PyGetWindow==0.0.9 
 edge-tts 
 pygame
+pdfplumber
+pandas
+openpyxl

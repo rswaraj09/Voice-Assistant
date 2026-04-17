@@ -11,6 +11,7 @@ from playsound import playsound
 import eel
 import pyaudio
 import pyautogui
+import base64
 from engine.command import speak
 from engine.config import ASSISTANT_NAME, LLM_KEY
 import pywhatkit as kit
@@ -354,3 +355,22 @@ def InsertContacts(Name, MobileNo, Email, City):
         (None, Name, MobileNo, Email, City)
     )
     _main_con.commit()
+
+
+@eel.expose
+def receivePDFUpload(filename, base64_data):
+    """Receives the uploaded PDF from JS, saves to temp, signals converter."""
+    try:
+        from engine.pdf_to_excel import set_uploaded_pdf
+        pdf_bytes = base64.b64decode(base64_data)
+        tmp_dir   = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Temp", "JarvisPDF")
+        os.makedirs(tmp_dir, exist_ok=True)
+        tmp_path  = os.path.join(tmp_dir, filename)
+        with open(tmp_path, "wb") as f:
+            f.write(pdf_bytes)
+        print(f"[PDF Upload] Saved to: {tmp_path}")
+        set_uploaded_pdf(tmp_path)
+        return tmp_path
+    except Exception as e:
+        print(f"[PDF Upload] Error: {e}")
+        return ""

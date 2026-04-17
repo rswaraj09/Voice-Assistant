@@ -54,7 +54,15 @@ def goback(key_code):
 def replace_spaces_with_percent_s(input_string):
     return input_string.replace(' ', '%s')
 
-def markdown_to_text(md):
-    html = markdown2.markdown(md)
-    soup = BeautifulSoup(html, "html.parser")
-    return soup.get_text().strip()
+def markdown_to_text(text):
+    if not text:
+        return ""
+    text = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', text)   # bold/italic
+    text = re.sub(r'#{1,6}\s?', '', text)                  # headings
+    text = re.sub(r'`{1,3}(.*?)`{1,3}', r'\1', text)      # code blocks
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)  # links
+    text = re.sub(r'[-*]\s+', '', text)                    # bullet points
+    text = re.sub(r'\n{2,}', '. ', text)                   # double newlines
+    text = re.sub(r'\n', ' ', text)                        # single newlines
+    text = re.sub(r'\s{2,}', ' ', text)                    # extra spaces
+    return text.strip()

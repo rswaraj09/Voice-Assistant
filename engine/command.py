@@ -22,8 +22,8 @@ _conversation_history = []
 MAX_HISTORY = 10
 
 # ── Voice config ──────────────────────────────────────────────────────────
-VOICE = "en-IN-NeerjaNeural"
-RATE  = "+20%"
+VOICE = "en-US-AvaNeural"
+RATE  = "+0%"
 PITCH = "+0Hz"
 
 # ── Paths ─────────────────────────────────────────────────────────────────
@@ -275,7 +275,7 @@ def _download_app(app_name):
 #  SPEAK
 # ════════════════════════════════════════════════════════════════════════════
 async def _generate_audio(text):
-    communicate = edge_tts.Communicate(text, voice=VOICE, rate=RATE, pitch=PITCH)
+    communicate = edge_tts.Communicate(text, voice=VOICE)
     audio_bytes = b""
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
@@ -339,14 +339,18 @@ def speak(text, use_cache=True):
     except Exception as e:
         print(f"[speak] Edge TTS error: {e} — falling back to pyttsx3")
         try:
-            engine = pyttsx3.init('sapi5')
-            voices = engine.getProperty('voices')
-            engine.setProperty('voice', voices[1].id)
-            engine.setProperty('rate', 185)
-            engine.setProperty('volume', 1.0)
-            engine.say(text)
-            engine.runAndWait()
-            engine.stop()
+            # Run pyttsx3 in a separate process/thread to avoid loop errors
+            def _fallback():
+                try:
+                    engine = pyttsx3.init('sapi5')
+                    voices = engine.getProperty('voices')
+                    engine.setProperty('voice', voices[1].id if len(voices) > 1 else voices[0].id)
+                    engine.setProperty('rate', 185)
+                    engine.say(text)
+                    engine.runAndWait()
+                except:
+                    pass
+            threading.Thread(target=_fallback).start()
         except Exception as e2:
             print(f"[speak] Fallback error: {e2}")
     finally:
@@ -557,6 +561,39 @@ def process_query(query):
                 app_name = extract_app_name(query, 'open')
                 openApp(app_name)
             return False
+
+        # ── PPT GENERATION ────────────────────────────────────────────────────
+        elif any(w in query for w in [
+            "create a ppt", "make a ppt", "generate a ppt", "build a ppt",
+            "create a presentation", "make a presentation", "generate presentation",
+            "create ppt", "make ppt", "create powerpoint", "make powerpoint",
+            "create slides", "make slides", "prepare a presentation",
+            "prepare ppt", "build presentation"
+        ]):
+            from engine.ppt_generator import handlePPTGeneration
+            handlePPTGeneration(query)
+            return False
+
+        # ── IMAGE GENERATION ──────────────────────────────────────────────────────
+        elif re.search(
+            r'\b(generate|create|draw|make|show)\b.{0,15}\b(image|picture|photo|wallpaper|illustration)\b'
+            r'|'
+            r'\bdraw\s+(?:a\s+)?(?:4k|realistic|hd)?\s*\w+',
+            query, re.IGNORECASE
+        ):
+            from engine.image_generator import handleImageGeneration
+            handleImageGeneration(query, speak)
+            return False
+
+        elif re.search(
+            r'\b(convert|turn|change)\b.{0,20}\bpdf\b.{0,20}\b(excel|xlsx|spreadsheet)\b'
+            r'|'
+            r'\bpdf\b.{0,15}\b(to|into)\b.{0,10}\b(excel|xlsx|spreadsheet)\b',
+            query, re.IGNORECASE
+        ):
+            from engine.pdf_to_excel import handlePDFToExcel
+            threading.Thread(target=handlePDFToExcel, args=(speak,), daemon=True).start()
+            return True
 
         elif any(t in query for t in ["create a", "make a", "build a", "generate a", "write a",
                                        "create an", "make an", "build an", "generate code", "write code"]) \
