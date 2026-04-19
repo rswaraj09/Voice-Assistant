@@ -446,6 +446,39 @@ def extract_app_name(query, *remove_words):
     return re.sub(r'\s+', ' ', app).strip()
 
 
+def _is_ml_request(query):
+    """
+    Returns True if the query is asking for an AI/ML project.
+    Checks for ML-specific keywords to distinguish from generic web app requests.
+    """
+    q = query.lower()
+ 
+    # Strong ML signals — any single one triggers ML mode
+    strong_signals = [
+        "machine learning", "ml model", "ai model", "train a model", "train the model",
+        "deep learning", "neural network", "random forest", "regression model",
+        "classification model", "train and test", "pickle", "sklearn", "scikit",
+        "predict using ml", "ml project", "ai project",
+    ]
+    for signal in strong_signals:
+        if signal in q:
+            return True
+ 
+    # Combination signals — need BOTH an action + a task
+    action_words  = ["create", "make", "build", "generate", "develop", "train"]
+    ml_task_words = [
+        "predict", "prediction", "classifier", "regression",
+        "sentiment", "detection", "diagnosis", "clustering",
+        "recommendation", "forecasting", "spam", "fraud",
+        "price prediction", "house price", "stock price",
+        "churn prediction", "cancer detection", "heart disease",
+    ]
+    has_action = any(w in q for w in action_words)
+    has_task   = any(t in q for t in ml_task_words)
+ 
+    return has_action and has_task
+
+
 # ════════════════════════════════════════════════════════════════════════════
 #  AI CONVERSATION
 # ════════════════════════════════════════════════════════════════════════════
@@ -595,6 +628,12 @@ def process_query(query):
             threading.Thread(target=handlePDFToExcel, args=(speak,), daemon=True).start()
             return True
 
+        # ── ML / AI PROJECT GENERATION ────────────────────────────────────────────────
+        elif _is_ml_request(query):
+            from engine.ml_project_generator import handleMLGeneration
+            handleMLGeneration(query)
+            return True
+
         elif any(t in query for t in ["create a", "make a", "build a", "generate a", "write a",
                                        "create an", "make an", "build an", "generate code", "write code"]) \
         and any(t in query for t in ["page", "website", "script", "program", "app", "calculator",
@@ -718,6 +757,17 @@ def process_query(query):
                     except Exception as e:
                         print(f"WhatsApp Error: {e}")
                         speak("Something went wrong with WhatsApp.")
+            return False
+
+        # ── VIRTUAL TRY-ON ────────────────────────────────────────────────────
+        elif any(w in query for w in [
+            "try this cloth", "try on", "virtual try",
+            "wear this", "try this outfit", "try this dress",
+            "try this shirt", "try this top", "how does this look",
+            "virtual dressing", "try on this"
+        ]):
+            from engine.virtual_tryon import handleVirtualTryOn
+            handleVirtualTryOn(query)
             return False
 
         else:
