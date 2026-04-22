@@ -12,3 +12,4 @@ tts_cache/
 win_app_cache.json
 app_cache.json
 node_modules
+cache

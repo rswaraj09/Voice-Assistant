@@ -127,3 +127,7 @@ pygame
 pdfplumber
 pandas
 openpyxl
+mediapipe
+rembg
+onnxruntime
+reportlab 

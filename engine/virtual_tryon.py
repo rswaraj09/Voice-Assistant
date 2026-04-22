@@ -1,7 +1,20 @@
+"""
+virtual_tryon.py — Real-time Virtual Try-On for Nora
+Compatible with mediapipe 0.10+ (Tasks API — no mp.solutions)
+
+Pipeline:
+  1. Screenshot current screen
+  2. Extract clothing item (rembg → GrabCut → simple crop fallback)
+  3. Open webcam
+  4. MediaPipe PoseLandmarker (Tasks API) → shoulder/hip landmarks
+  5. Alpha-blend cloth onto body in real time
+  6. Live window — C=Capture  R=Retry  Q=Quit
+"""
+
 import os
 import cv2
 import time
-import threading
+import urllib.request
 import numpy as np
 import pyautogui
 from datetime import datetime
@@ -11,8 +24,24 @@ BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.join(BASE_DIR, "..")
 TMP_DIR     = os.path.join(PROJECT_DIR, "cache", "tryon_tmp")
 OUT_DIR     = os.path.join(PROJECT_DIR, "tryon_captures")
+MODEL_PATH  = os.path.join(PROJECT_DIR, "cache", "pose_landmarker.task")
 os.makedirs(TMP_DIR, exist_ok=True)
 os.makedirs(OUT_DIR, exist_ok=True)
+
+# Official lite model (~3MB, fast)
+MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/"
+    "pose_landmarker/pose_landmarker_lite/float16/latest/"
+    "pose_landmarker_lite.task"
+)
+
+# Landmark indices (mediapipe 0.10+ Tasks API)
+IDX = {
+    "left_shoulder":  11,
+    "right_shoulder": 12,
+    "left_hip":       23,
+    "right_hip":      24,
+}
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -21,39 +50,56 @@ os.makedirs(OUT_DIR, exist_ok=True)
 def handleVirtualTryOn(query):
     from engine.command import speak, takecommand
 
-    speak("Sure! I'll capture your screen to get the clothing item. Please make sure the clothing is visible on screen.")
-    time.sleep(1.5)
+    speak("Sure! I will capture your screen to get the clothing item. Make sure the clothing is clearly visible.")
+    time.sleep(1.2)
 
-    # ── Step 1: Screenshot ────────────────────────────────────────────────
+    # Download model if needed (only first time)
+    if not os.path.exists(MODEL_PATH):
+        speak("Downloading pose detection model for the first time. This is about 3 megabytes.")
+        if not _download_model():
+            speak("Sorry, model download failed. Please check your internet connection.")
+            return
+
     speak("Capturing screen now.")
     screenshot_path = _capture_screenshot()
     if not screenshot_path:
-        speak("Sorry, I couldn't capture the screen. Please try again.")
+        speak("Screen capture failed. Please try again.")
         return
 
-    # ── Step 2: Extract clothing ──────────────────────────────────────────
-    speak("Extracting the clothing item from the screen.")
+    speak("Extracting the clothing item.")
     cloth_path = _extract_clothing(screenshot_path)
     if not cloth_path:
-        speak("I couldn't detect a clothing item on screen. Please open a clear image of the clothing and try again.")
+        speak("Could not detect a clothing item. Please open a clear image of the clothing and try again.")
         return
 
-    speak("Clothing extracted successfully. Opening webcam for virtual try-on. Press R to retry, C to capture, or Q to quit.")
-
-    # ── Step 3: Run live try-on ───────────────────────────────────────────
+    speak("Clothing ready. Opening webcam. Stand back so your full upper body is visible. Press C to capture, R to retry, Q to quit.")
     _run_tryon(cloth_path)
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  STEP 1: SCREENSHOT
+#  DOWNLOAD POSE MODEL
+# ════════════════════════════════════════════════════════════════════════════
+def _download_model():
+    try:
+        print(f"[TryOn] Downloading: {MODEL_URL}")
+        os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        print(f"[TryOn] Model saved: {MODEL_PATH}")
+        return True
+    except Exception as e:
+        print(f"[TryOn] Download error: {e}")
+        return False
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  SCREENSHOT
 # ════════════════════════════════════════════════════════════════════════════
 def _capture_screenshot():
     try:
         ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
         path = os.path.join(TMP_DIR, f"screen_{ts}.png")
-        screenshot = pyautogui.screenshot()
-        screenshot.save(path)
-        print(f"[TryOn] Screenshot saved: {path}")
+        pyautogui.screenshot().save(path)
+        print(f"[TryOn] Screenshot: {path}")
         return path
     except Exception as e:
         print(f"[TryOn] Screenshot error: {e}")
@@ -61,303 +107,393 @@ def _capture_screenshot():
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  STEP 2: CLOTH EXTRACTION
-#  Uses rembg to remove background, then crops the largest detected region
+#  CLOTH EXTRACTION  (3-tier fallback)
 # ════════════════════════════════════════════════════════════════════════════
 def _extract_clothing(screenshot_path):
+    # Tier 1: rembg (best quality, needs pip install rembg)
     try:
         from rembg import remove
         from PIL import Image
+        import mediapipe as mp
+        from mediapipe.tasks import python as mp_python
+        from mediapipe.tasks.python import vision as mp_vision
 
-        ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out  = os.path.join(TMP_DIR, f"cloth_{ts}.png")
-
-        # Load screenshot
+        ts     = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out    = os.path.join(TMP_DIR, f"cloth_{ts}.png")
         screen = cv2.imread(screenshot_path)
         h, w   = screen.shape[:2]
 
-        # Focus on center region (where clothing images usually are)
-        cx, cy = w // 2, h // 2
-        crop_w = min(w, 800)
-        crop_h = min(h, 800)
-        x1 = max(0, cx - crop_w // 2)
-        y1 = max(0, cy - crop_h // 2)
-        x2 = min(w, cx + crop_w // 2)
-        y2 = min(h, cy + crop_h // 2)
-        cropped = screen[y1:y2, x1:x2]
+        # ── Step A: Use Pose detection to find the torso and crop the head out ──
+        # This prevents capturing the model's face if we're looking at a person
+        cropped = None
+        try:
+            base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
+            options = mp_vision.PoseLandmarkerOptions(base_options=base_options, running_mode=mp_vision.RunningMode.IMAGE)
+            with mp_vision.PoseLandmarker.create_from_options(options) as landmarker:
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(screen, cv2.COLOR_BGR2RGB))
+                res = landmarker.detect(mp_image)
 
-        # Remove background using rembg
-        img_pil    = Image.fromarray(cv2.cvtColor(cropped, cv2.COLOR_BGR2RGBA))
-        result_pil = remove(img_pil)
-        result_arr = np.array(result_pil)
+                if res.pose_landmarks and len(res.pose_landmarks) > 0:
+                    lms = res.pose_landmarks[0]
+                    # Get shoulder and hip landmarks to define torso
+                    ls = lms[IDX["left_shoulder"]]; rs = lms[IDX["right_shoulder"]]
+                    lh = lms[IDX["left_hip"]];      rh = lms[IDX["right_hip"]]
+                    
+                    # Calculate bounding box for torso with some padding
+                    y_top = min(ls.y, rs.y) - 0.05 # Start slightly above shoulders
+                    y_bot = max(lh.y, rh.y) + 0.1  # End slightly below hips
+                    x_l   = min(ls.x, rs.x, lh.x, rh.x) - 0.15
+                    x_r   = max(ls.x, rs.x, lh.x, rh.x) + 0.15
+                    
+                    # Convert to pixel coords and clip
+                    y1, y2 = int(max(0, y_top) * h), int(min(1, y_bot) * h)
+                    x1, x2 = int(max(0, x_l) * w),   int(min(1, x_r) * w)
+                    
+                    if (y2 - y1) > 100 and (x2 - x1) > 100:
+                        cropped = screen[y1:y2, x1:x2]
+                        print(f"[TryOn] Torso isolated via Pose detection")
+        except Exception as e:
+            print(f"[TryOn] Pose isolation failed: {e}")
 
-        # Find largest non-transparent region
-        alpha = result_arr[:, :, 3]
-        _, binary = cv2.threshold(alpha, 10, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if cropped is None:
+            # Fallback: Crop center of screen
+            cx, cy = w // 2, h // 2
+            cw, ch = min(w, 900), min(h, 900)
+            x1, y1 = max(0, cx - cw // 2), max(0, cy - ch // 2)
+            x2, y2 = min(w, cx + cw // 2), min(h, cy + ch // 2)
+            cropped = screen[y1:y2, x1:x2]
+            print(f"[TryOn] Falling back to center crop")
 
-        if not contours:
-            print("[TryOn] No clothing contours found")
-            return None
+        # ── Step B: Background Removal ──
+        img_pil  = Image.fromarray(cv2.cvtColor(cropped, cv2.COLOR_BGR2RGBA))
+        result   = remove(img_pil)
+        arr      = np.array(result)
 
-        # Largest contour = main clothing item
-        largest = max(contours, key=cv2.contourArea)
-        area    = cv2.contourArea(largest)
+        # ── Step C: Mask out Head and Hands using Landmarks ──
+        # We use the pose landmarks from the original screen, but mapped to our 'cropped' coords
+        try:
+            ch_h, ch_w = arr.shape[:2]
+            # Create a mask for 'forbidden' regions
+            mask_forbidden = np.zeros((ch_h, ch_w), dtype=np.uint8)
+            
+            if res.pose_landmarks and len(res.pose_landmarks) > 0:
+                lms = res.pose_landmarks[0]
+                
+                # Forbidden landmarks: Face (0-10), Hands (15-22)
+                forbidden_indices = list(range(11)) + list(range(15, 23))
+                
+                for idx in forbidden_indices:
+                    lm = lms[idx]
+                    # Map back to 'cropped' pixel coords
+                    px_x = int(lm.x * w) - x1
+                    px_y = int(lm.y * h) - y1
+                    
+                    if 0 <= px_x < ch_w and 0 <= px_y < ch_h:
+                        # Draw a circle on the forbidden mask
+                        radius = 45 if idx < 11 else 60 # Larger for hands
+                        cv2.circle(mask_forbidden, (px_x, px_y), radius, 255, -1)
+            
+            # Blur the mask for smooth transitions
+            mask_forbidden = cv2.GaussianBlur(mask_forbidden, (41, 41), 0)
+            
+            # Apply: Alpha = Alpha * (1 - Forbidden)
+            alpha = arr[:, :, 3].astype(np.float32)
+            alpha_factor = 1.0 - (mask_forbidden.astype(np.float32) / 255.0)
+            arr[:, :, 3] = (alpha * alpha_factor).astype(np.uint8)
+        except Exception as e:
+            print(f"[TryOn] Head/Hand masking failed: {e}")
 
-        if area < 5000:
-            print(f"[TryOn] Detected region too small: {area}px²")
-            return None
+        # ── Step D: Final Crop to non-transparent region ──
+        alpha    = arr[:, :, 3]
+        _, bin_  = cv2.threshold(alpha, 15, 255, cv2.THRESH_BINARY)
+        cnts, _  = cv2.findContours(bin_, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if not cnts:
+            raise ValueError("no contours")
+        largest = max(cnts, key=cv2.contourArea)
+        if cv2.contourArea(largest) < 4000:
+            raise ValueError("too small")
 
         bx, by, bw, bh = cv2.boundingRect(largest)
-        # Add padding
-        pad = 20
-        bx  = max(0, bx - pad)
-        by  = max(0, by - pad)
-        bw  = min(result_arr.shape[1] - bx, bw + 2*pad)
-        bh  = min(result_arr.shape[0] - by, bh + 2*pad)
-
-        cloth_crop = result_arr[by:by+bh, bx:bx+bw]
-        Image.fromarray(cloth_crop).save(out)
-
-        print(f"[TryOn] Cloth extracted: {out} ({bw}x{bh}px)")
+        pad = 5 # Reduced padding for tighter fit
+        bx = max(0, bx-pad); by = max(0, by-pad)
+        bw = min(arr.shape[1]-bx, bw+2*pad)
+        bh = min(arr.shape[0]-by, bh+2*pad)
+        Image.fromarray(arr[by:by+bh, bx:bx+bw]).save(out)
+        print(f"[TryOn] rembg cloth: {out}")
         return out
 
     except ImportError:
-        print("[TryOn] rembg not installed. Using fallback extraction.")
-        return _extract_clothing_fallback(screenshot_path)
+        print("[TryOn] rembg not installed — using GrabCut")
+        return _extract_grabcut(screenshot_path)
     except Exception as e:
-        print(f"[TryOn] Cloth extraction error: {e}")
-        return _extract_clothing_fallback(screenshot_path)
+        print(f"[TryOn] rembg failed ({e}) — using GrabCut")
+        return _extract_grabcut(screenshot_path)
 
 
-def _extract_clothing_fallback(screenshot_path):
-    """Fallback: crop center region without background removal."""
+def _extract_grabcut(screenshot_path):
     try:
         ts     = datetime.now().strftime("%Y%m%d_%H%M%S")
         out    = os.path.join(TMP_DIR, f"cloth_{ts}.png")
         screen = cv2.imread(screenshot_path)
         h, w   = screen.shape[:2]
-        # Take center 40% of screen
-        x1 = int(w * 0.3); x2 = int(w * 0.7)
-        y1 = int(h * 0.15); y2 = int(h * 0.75)
-        crop = screen[y1:y2, x1:x2]
-        # Convert to RGBA
-        rgba = cv2.cvtColor(crop, cv2.COLOR_BGR2BGRA)
+
+        x1, x2 = int(w*0.28), int(w*0.72)
+        y1, y2 = int(h*0.10), int(h*0.78)
+        crop   = screen[y1:y2, x1:x2]
+        ch, cw = crop.shape[:2]
+
+        mask = np.zeros(crop.shape[:2], np.uint8)
+        bgd  = np.zeros((1, 65), np.float64)
+        fgd  = np.zeros((1, 65), np.float64)
+        rect = (int(cw*0.1), int(ch*0.05), int(cw*0.8), int(ch*0.88))
+        cv2.grabCut(crop, mask, rect, bgd, fgd, 5, cv2.GC_INIT_WITH_RECT)
+        mask2 = np.where((mask == 2) | (mask == 0), 0, 255).astype("uint8")
+
+        rgba  = cv2.cvtColor(crop, cv2.COLOR_BGR2BGRA)
+        rgba[:, :, 3] = mask2
+
+        cnts, _ = cv2.findContours(mask2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if cnts:
+            largest = max(cnts, key=cv2.contourArea)
+            bx, by, bw, bh = cv2.boundingRect(largest)
+            pad = 20
+            bx = max(0, bx-pad); by = max(0, by-pad)
+            bw = min(cw-bx, bw+2*pad); bh = min(ch-by, bh+2*pad)
+            rgba = rgba[by:by+bh, bx:bx+bw]
+
         cv2.imwrite(out, rgba)
-        print(f"[TryOn] Fallback cloth crop: {out}")
+        print(f"[TryOn] GrabCut cloth: {out}")
         return out
     except Exception as e:
-        print(f"[TryOn] Fallback error: {e}")
+        print(f"[TryOn] GrabCut failed ({e}) — simple crop")
+        return _extract_simple(screenshot_path)
+
+
+def _extract_simple(screenshot_path):
+    try:
+        ts     = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out    = os.path.join(TMP_DIR, f"cloth_{ts}.png")
+        screen = cv2.imread(screenshot_path)
+        h, w   = screen.shape[:2]
+        crop   = screen[int(h*0.12):int(h*0.75), int(w*0.30):int(w*0.70)]
+        rgba   = cv2.cvtColor(crop, cv2.COLOR_BGR2BGRA)
+        cv2.imwrite(out, rgba)
+        print(f"[TryOn] Simple crop: {out}")
+        return out
+    except Exception as e:
+        print(f"[TryOn] Simple crop failed: {e}")
         return None
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  STEP 3: LIVE TRY-ON WINDOW
+#  LIVE TRY-ON — mediapipe 0.10+ Tasks API
 # ════════════════════════════════════════════════════════════════════════════
+class VoiceState:
+    def __init__(self):
+        self.command = None
+        self.running = True
+
+def _bg_listener(state):
+    from engine.command import takecommand
+    while state.running:
+        try:
+            query = takecommand().lower()
+            if not query: continue
+            print(f"[TryOn] Voice: {query}")
+            if any(k in query for k in ["capture", "save", "photo", "click"]):
+                state.command = 'c'
+            elif any(k in query for k in ["retry", "reset", "again", "reload"]):
+                state.command = 'r'
+            elif any(k in query for k in ["quit", "stop", "exit", "close", "bye"]):
+                state.command = 'q'
+        except Exception:
+            pass
+
 def _run_tryon(cloth_path):
     import mediapipe as mp
+    import threading
+    from mediapipe.tasks import python as mp_python
+    from mediapipe.tasks.python import vision as mp_vision
+    from mediapipe.tasks.python.vision import PoseLandmarkerOptions, RunningMode
 
-    # Load cloth image (BGRA with alpha)
+    # Load cloth
     cloth_rgba = cv2.imread(cloth_path, cv2.IMREAD_UNCHANGED)
     if cloth_rgba is None:
-        print("[TryOn] Could not load cloth image")
+        _speak_safe("Could not load the clothing image.")
         return
-
-    # Ensure BGRA
-    if cloth_rgba.shape[2] == 3:
+    if cloth_rgba.ndim < 3 or cloth_rgba.shape[2] == 3:
         cloth_rgba = cv2.cvtColor(cloth_rgba, cv2.COLOR_BGR2BGRA)
 
-    # MediaPipe Pose
-    mp_pose    = mp.solutions.pose
-    mp_drawing = mp.solutions.drawing_utils
-    pose       = mp_pose.Pose(
-        static_image_mode=False,
-        model_complexity=1,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
+    # Build landmarker
+    opts = PoseLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
+        running_mode=RunningMode.VIDEO,
+        num_poses=1,
+        min_pose_detection_confidence=0.5,
+        min_pose_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
     )
+    lander = mp_vision.PoseLandmarker.create_from_options(opts)
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("[TryOn] Could not open webcam")
-        _speak_safe("Sorry, I couldn't access the webcam.")
+        _speak_safe("Webcam could not be opened.")
+        lander.close()
         return
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-    window_name = "Nora — Virtual Try-On  |  R=Retry  C=Capture  Q=Quit"
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_name, 1280, 720)
+    WIN = "Nora Virtual Try-On  |  C=Capture  R=Retry  Q=Quit"
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WIN, 1280, 720)
 
-    cloth_rgba_current = cloth_rgba.copy()
-    no_body_frames     = 0
-    MAX_NO_BODY        = 30   # warn after 1s without detection
+    ts_ms       = 0
+    no_body_cnt = 0
 
-    print("[TryOn] Live try-on started.")
+    # Start voice listener thread
+    v_state = VoiceState()
+    v_thread = threading.Thread(target=_bg_listener, args=(v_state,), daemon=True)
+    v_thread.start()
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        frame = cv2.flip(frame, 1)   # mirror for natural experience
-        h, w  = frame.shape[:2]
-        rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame  = cv2.flip(frame, 1)
+        h, w   = frame.shape[:2]
+        output = frame.copy()
 
-        results = pose.process(rgb)
-        output  = frame.copy()
+        # Pose detection
+        mp_img = mp.Image(
+            image_format=mp.ImageFormat.SRGB,
+            data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        )
+        ts_ms += 33
+        result = lander.detect_for_video(mp_img, ts_ms)
 
-        if results.pose_landmarks:
-            no_body_frames = 0
-            lm = results.pose_landmarks.landmark
+        if result.pose_landmarks and len(result.pose_landmarks) > 0:
+            no_body_cnt = 0
+            lms = result.pose_landmarks[0]
 
-            # ── Key landmarks ─────────────────────────────────────────────
-            L_SHOULDER = mp_pose.PoseLandmark.LEFT_SHOULDER
-            R_SHOULDER = mp_pose.PoseLandmark.RIGHT_SHOULDER
-            L_HIP      = mp_pose.PoseLandmark.LEFT_HIP
-            R_HIP      = mp_pose.PoseLandmark.RIGHT_HIP
+            def px(idx):
+                lm = lms[idx]
+                return (int(lm.x * w), int(lm.y * h))
 
-            ls = lm[L_SHOULDER.value]
-            rs = lm[R_SHOULDER.value]
-            lh = lm[L_HIP.value]
-            rh = lm[R_HIP.value]
+            ls = px(IDX["left_shoulder"])
+            rs = px(IDX["right_shoulder"])
+            lh = px(IDX["left_hip"])
+            rh = px(IDX["right_hip"])
 
-            # Convert normalized → pixel
-            def px(landmark):
-                return (int(landmark.x * w), int(landmark.y * h))
+            sw = abs(rs[0] - ls[0])               # shoulder width
+            th = abs(((lh[1]+rh[1])//2) - ((ls[1]+rs[1])//2))  # torso height
 
-            ls_px = px(ls)
-            rs_px = px(rs)
-            lh_px = px(lh)
-            rh_px = px(rh)
+            # Slightly larger multipliers for a fuller fit
+            cw = int(sw * 1.9)
+            ch = int(th * 1.8)
 
-            # ── Cloth placement calculations ──────────────────────────────
-            shoulder_width = abs(rs_px[0] - ls_px[0])
-            body_height    = abs(((lh_px[1] + rh_px[1]) // 2) - ((ls_px[1] + rs_px[1]) // 2))
-
-            cloth_w = int(shoulder_width * 1.6)   # wider than shoulders
-            cloth_h = int(body_height    * 1.5)   # torso height
-
-            if cloth_w < 30 or cloth_h < 30:
-                _draw_overlay(output, "Move closer to camera", w, h)
+            if cw < 20 or ch < 20:
+                _draw_msg(output, "Move closer to camera", w, h)
             else:
-                # Top-left of cloth placement
-                cloth_x = min(ls_px[0], rs_px[0]) - int(shoulder_width * 0.3)
-                cloth_y = min(ls_px[1], rs_px[1]) - int(body_height    * 0.1)
+                # Better centering and vertical positioning
+                cx = min(ls[0], rs[0]) - int(sw * 0.45)
+                cy = min(ls[1], rs[1]) - int(th * 0.15)
+                output = _overlay_cloth(output, cloth_rgba, cx, cy, cw, ch)
 
-                output = _overlay_cloth(output, cloth_rgba_current, cloth_x, cloth_y, cloth_w, cloth_h)
-
-            # Draw subtle pose dots (optional)
-            for point in [ls_px, rs_px, lh_px, rh_px]:
-                cv2.circle(output, point, 5, (0, 201, 177), -1)
-
+            # Landmark dots
+            for pt in [ls, rs, lh, rh]:
+                cv2.circle(output, pt, 6, (0, 201, 177), -1)
+                cv2.circle(output, pt, 7, (255, 255, 255), 1)
         else:
-            no_body_frames += 1
-            if no_body_frames > MAX_NO_BODY:
-                _draw_overlay(output, "No body detected — stand in front of camera", w, h)
+            no_body_cnt += 1
+            if no_body_cnt > 25:
+                _draw_msg(output, "No body detected — step back from camera", w, h)
 
-        # ── HUD ───────────────────────────────────────────────────────────
         _draw_hud(output, w, h)
+        cv2.imshow(WIN, output)
 
-        cv2.imshow(window_name, output)
-
+        # Check for Keyboard OR Voice commands
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('q') or key == 27:
+        cmd = chr(key) if key != 255 else None
+        
+        if v_state.command:
+            cmd = v_state.command
+            v_state.command = None # Clear it
+            print(f"[TryOn] Executing voice command: {cmd}")
+
+        if cmd == 'q' or key == 27:
             break
-        elif key == ord('c'):
+        elif cmd == 'c':
             saved = _save_capture(output)
-            _speak_safe(f"Captured and saved.")
-            print(f"[TryOn] Saved: {saved}")
-            _draw_overlay(output, f"Saved!", w, h)
-            cv2.imshow(window_name, output)
+            _speak_safe("Captured and saved.")
+            _draw_msg(output, "Saved!", w, h)
+            cv2.imshow(WIN, output)
             cv2.waitKey(1500)
-        elif key == ord('r'):
-            _speak_safe("Retrying cloth extraction. Please wait.")
-            cv2.destroyWindow(window_name)
+        elif cmd == 'r':
             cap.release()
-            pose.close()
+            cv2.destroyAllWindows()
+            lander.close()
+            v_state.running = False # Stop voice thread
+            _speak_safe("Retrying. Please wait.")
             handleVirtualTryOn("retry")
             return
 
+    v_state.running = False
     cap.release()
     cv2.destroyAllWindows()
-    pose.close()
+    lander.close()
     print("[TryOn] Session ended.")
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  CLOTH OVERLAY — alpha blend cloth onto frame
+#  OVERLAY + UI HELPERS
 # ════════════════════════════════════════════════════════════════════════════
-def _overlay_cloth(frame, cloth_rgba, x, y, target_w, target_h):
-    if target_w <= 0 or target_h <= 0:
+def _overlay_cloth(frame, cloth_rgba, x, y, tw, th):
+    if tw <= 0 or th <= 0:
         return frame
-
     try:
-        # Resize cloth to target size
-        cloth_resized = cv2.resize(cloth_rgba, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-
+        cloth  = cv2.resize(cloth_rgba, (tw, th), interpolation=cv2.INTER_LINEAR)
         fh, fw = frame.shape[:2]
-
-        # Clip to frame bounds
-        x1_f = max(0, x)
-        y1_f = max(0, y)
-        x2_f = min(fw, x + target_w)
-        y2_f = min(fh, y + target_h)
-
-        x1_c = x1_f - x
-        y1_c = y1_f - y
-        x2_c = x1_c + (x2_f - x1_f)
-        y2_c = y1_c + (y2_f - y1_f)
-
-        if x2_f <= x1_f or y2_f <= y1_f:
+        x1f = max(0, x);       y1f = max(0, y)
+        x2f = min(fw, x+tw);   y2f = min(fh, y+th)
+        x1c = x1f - x;         y1c = y1f - y
+        x2c = x1c + (x2f-x1f); y2c = y1c + (y2f-y1f)
+        if x2f <= x1f or y2f <= y1f:
             return frame
-
-        cloth_roi = cloth_resized[y1_c:y2_c, x1_c:x2_c]
-        frame_roi = frame[y1_f:y2_f, x1_f:x2_f]
-
-        if cloth_roi.shape[2] == 4:
-            alpha   = cloth_roi[:, :, 3:4].astype(np.float32) / 255.0
-            cloth_3 = cloth_roi[:, :, :3].astype(np.float32)
-            frame_3 = frame_roi.astype(np.float32)
-
-            blended = (alpha * cloth_3 + (1 - alpha) * frame_3).astype(np.uint8)
-            frame[y1_f:y2_f, x1_f:x2_f] = blended
+        roi_c = cloth[y1c:y2c, x1c:x2c]
+        roi_f = frame[y1f:y2f, x1f:x2f].astype(np.float32)
+        if roi_c.shape[2] == 4:
+            a       = roi_c[:, :, 3:4].astype(np.float32) / 255.0
+            blended = (a * roi_c[:, :, :3].astype(np.float32) + (1-a) * roi_f).astype(np.uint8)
         else:
-            frame[y1_f:y2_f, x1_f:x2_f] = cloth_roi[:, :, :3]
-
+            blended = roi_c[:, :, :3]
+        frame[y1f:y2f, x1f:x2f] = blended
     except Exception as e:
         print(f"[TryOn] Overlay error: {e}")
-
     return frame
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  HUD + OVERLAYS
-# ════════════════════════════════════════════════════════════════════════════
 def _draw_hud(frame, w, h):
-    # Semi-transparent bottom bar
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, h-50), (w, h), (30, 39, 97), -1)
-    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(frame, "Nora Virtual Try-On", (20, h-28), font, 0.6, (0, 201, 177), 2)
-    cv2.putText(frame, "C = Capture  |  R = Retry  |  Q = Quit", (w//2 - 150, h-28), font, 0.55, (200, 200, 200), 1)
-
-
-def _draw_overlay(frame, message, w, h):
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, h//2 - 35), (w, h//2 + 35), (0, 0, 0), -1)
-    cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    text_w, _ = cv2.getTextSize(message, font, 0.8, 2)[0]
-    cv2.putText(frame, message, ((w - text_w) // 2, h//2 + 10), font, 0.8, (0, 201, 177), 2)
+    ov = frame.copy()
+    cv2.rectangle(ov, (0, h-52), (w, h), (30, 39, 97), -1)
+    cv2.addWeighted(ov, 0.72, frame, 0.28, 0, frame)
+    f = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(frame, "Nora Virtual Try-On", (18, h-28), f, 0.6, (0, 201, 177), 2)
+    cv2.putText(frame, "Say 'Capture', 'Retry', or 'Quit' (or use keys C, R, Q)",
+                (w//2-220, h-28), f, 0.5, (200, 200, 200), 1)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  SAVE CAPTURE
-# ════════════════════════════════════════════════════════════════════════════
+def _draw_msg(frame, msg, w, h):
+    ov = frame.copy()
+    cv2.rectangle(ov, (0, h//2-38), (w, h//2+38), (0, 0, 0), -1)
+    cv2.addWeighted(ov, 0.6, frame, 0.4, 0, frame)
+    f  = cv2.FONT_HERSHEY_SIMPLEX
+    tw = cv2.getTextSize(msg, f, 0.8, 2)[0][0]
+    cv2.putText(frame, msg, ((w-tw)//2, h//2+10), f, 0.8, (0, 201, 177), 2)
+
+
 def _save_capture(frame):
     ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = os.path.join(OUT_DIR, f"tryon_{ts}.jpg")
@@ -365,9 +501,6 @@ def _save_capture(frame):
     return path
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  SAFE SPEAK (works even if eel is not active)
-# ════════════════════════════════════════════════════════════════════════════
 def _speak_safe(text):
     try:
         from engine.command import speak

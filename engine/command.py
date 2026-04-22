@@ -479,6 +479,21 @@ def _is_ml_request(query):
     return has_action and has_task
 
 
+def _is_file_share_request(query):
+    has_action = any(w in query for w in [
+        "convert", "share", "send", "forward", "upload", "attach"
+    ])
+    has_target = any(w in query for w in [
+        "whatsapp", "telegram", "email", "gmail", "google drive",
+        "drive", "bluetooth", "slack", "discord"
+    ])
+    has_file = any(w in query for w in [
+        "excel", "spreadsheet", "pdf", "word", "document",
+        "file", "sheet", "ppt", "presentation", "image", "photo"
+    ])
+    return (has_action and has_target) or (has_action and has_file and has_target)
+
+
 # ════════════════════════════════════════════════════════════════════════════
 #  AI CONVERSATION
 # ════════════════════════════════════════════════════════════════════════════
@@ -632,6 +647,20 @@ def process_query(query):
         elif _is_ml_request(query):
             from engine.ml_project_generator import handleMLGeneration
             handleMLGeneration(query)
+            return True
+
+        elif re.search(
+            r'\b(convert|send|share|forward|upload)\b.{0,30}'
+            r'\b(excel|xlsx|pdf|spreadsheet|file|document)\b.{0,30}'
+            r'\b(whatsapp|drive|email|mail|gmail|telegram|send|share)\b',
+            query, re.IGNORECASE
+        ):
+            from engine.file_share import handleFileShareCommand
+            threading.Thread(
+                target=handleFileShareCommand,
+                args=(query, speak, takecommand),
+                daemon=True
+            ).start()
             return True
 
         elif any(t in query for t in ["create a", "make a", "build a", "generate a", "write a",
