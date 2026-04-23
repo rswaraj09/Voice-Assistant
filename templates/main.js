@@ -108,6 +108,7 @@ $(document).ready(function () {
     eel.displaySysCommand()();
     eel.displayWebCommand()();
     eel.displayPhoneBookCommand()();
+    refreshModesList();
 
     eel.expose(showSiriWaveFromPython)
     function showSiriWaveFromPython() {
@@ -228,7 +229,111 @@ $(document).ready(function () {
         }
     });
 
+    // ── MODES ─────────────────────────────────────────────────────────────
+    function refreshModesList() {
+        eel.uiListModes()(function (raw) {
+            let modes = JSON.parse(raw || "[]");
+            let host = document.querySelector("#ModesList");
+            if (!host) return;
+            if (modes.length === 0) {
+                host.innerHTML = '<p class="text-light"><em>No modes yet. Create one above.</em></p>';
+                return;
+            }
+            let out = "";
+            for (let m of modes) {
+                out += `
+                <div class="mode-card mb-3 p-3" style="border:1px solid rgba(0,170,255,0.4);border-radius:6px;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong class="text-light text-capitalize">${m.name}</strong>
+                            <span class="text-light" style="opacity:0.7;"> — ${m.description || ""}</span>
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-glow me-2" onClick="ModeActivate('${m.name}')">Activate</button>
+                            <button class="btn btn-sm btn-glow-red" onClick="ModeDelete('${m.name}')">Delete</button>
+                        </div>
+                    </div>
+                    <div class="d-flex mt-2">
+                        <select id="ItemType-${m.id}" class="form-control glassy-form me-2" style="max-width:110px;">
+                            <option value="app">App</option>
+                            <option value="link">Link</option>
+                        </select>
+                        <input type="text" class="form-control glassy-form me-2"
+                               id="ItemRef-${m.id}" placeholder="app name or URL">
+                        <button class="btn btn-glow" onClick="ModeAddItem('${m.name}', ${m.id})">Add</button>
+                    </div>
+                    <div id="ModeItems-${m.id}" class="mt-2"></div>
+                </div>`;
+            }
+            host.innerHTML = out;
+            for (let m of modes) { refreshModeItems(m.name, m.id); }
+        });
+    }
+    window.refreshModesList = refreshModesList;
+
+    function refreshModeItems(name, modeId) {
+        eel.uiGetModeItems(name)(function (raw) {
+            let items = JSON.parse(raw || "[]");
+            let host = document.querySelector(`#ModeItems-${modeId}`);
+            if (!host) return;
+            if (items.length === 0) {
+                host.innerHTML = '<small class="text-light" style="opacity:0.6;">No items.</small>';
+                return;
+            }
+            let out = '<ul class="list-unstyled mb-0">';
+            for (let it of items) {
+                out += `<li class="text-light" style="font-size:0.9em;">
+                    <span style="opacity:0.8;">[${it.type}]</span> ${it.ref}
+                    <button class="btn btn-sm btn-glow-red ms-2" style="padding:2px 8px;"
+                            onClick="ModeRemoveItem(${it.id}, '${name}', ${modeId})">×</button>
+                </li>`;
+            }
+            out += "</ul>";
+            host.innerHTML = out;
+        });
+    }
+    window.refreshModeItems = refreshModeItems;
+
+    $("#CreateModeBtn").click(function () {
+        let name = $("#ModeName").val().trim();
+        let desc = $("#ModeDescription").val().trim();
+        if (!name) {
+            const toast = new bootstrap.Toast(document.getElementById('liveToast'));
+            $("#ToastMessage").text("Mode name required"); toast.show();
+            return;
+        }
+        eel.uiCreateMode(name, desc)(function (raw) {
+            let res = JSON.parse(raw);
+            if (res.ok) {
+                swal({ title: res.message, icon: "success" });
+                $("#ModeName").val(""); $("#ModeDescription").val("");
+                refreshModesList();
+            } else {
+                const toast = new bootstrap.Toast(document.getElementById('liveToast'));
+                $("#ToastMessage").text(res.message); toast.show();
+            }
+        });
+    });
 });
+
+function ModeActivate(name) {
+    eel.uiActivateMode(name);
+}
+function ModeDelete(name) {
+    eel.uiDeleteMode(name)(function () { refreshModesList(); });
+}
+function ModeAddItem(name, modeId) {
+    let type = document.querySelector(`#ItemType-${modeId}`).value;
+    let ref  = document.querySelector(`#ItemRef-${modeId}`).value.trim();
+    if (!ref) return;
+    eel.uiAddToMode(name, type, ref)(function () {
+        document.querySelector(`#ItemRef-${modeId}`).value = "";
+        refreshModeItems(name, modeId);
+    });
+}
+function ModeRemoveItem(itemId, name, modeId) {
+    eel.uiRemoveModeItem(itemId)(function () { refreshModeItems(name, modeId); });
+}
 
 function SysDeleteID(clicked_id) {
     eel.deleteSysCommand(clicked_id); eel.displaySysCommand()();

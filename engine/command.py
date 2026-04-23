@@ -569,6 +569,12 @@ def process_query(query):
 
     try:
 
+        # ── MODE SYSTEM — checked early so "open X mode" isn't eaten by generic open handler
+        if re.search(r'\bmodes?\b', query):
+            from engine.modes import handle_mode_command
+            if handle_mode_command(query):
+                return True
+
         if re.search(r'\b(stop|go back|home|cancel|goodbye|bye|exit)\b', query):
             speak("Okay, see you later!")
             return False
