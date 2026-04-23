@@ -7,6 +7,9 @@ import time
 from engine.features import playAssistantSound
 from engine.command import speak, allCommands
 from engine import modes as _modes  # noqa: F401 — registers eel-exposed mode helpers
+from engine import news_aggregator as _news  # noqa: F401
+from engine import avatar_generator as _avatar  # noqa: F401
+from engine import model_trainer as _trainer  # noqa: F401
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HOTWORD_TRIGGER_FILE = os.path.join(BASE_DIR, "hotword_trigger.txt")

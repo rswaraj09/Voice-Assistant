@@ -28,6 +28,16 @@
 
 <body>
 
+    <!-- Active avatar — shown in top-right when one is configured -->
+    <div id="ActiveAvatarHost" hidden
+         style="position:fixed;top:18px;right:18px;z-index:20;width:96px;height:96px;
+                border:2px solid rgba(0,170,255,0.55);border-radius:50%;overflow:hidden;
+                background:rgba(0,0,0,0.35);box-shadow:0 0 20px rgba(0,170,255,0.35);
+                transition:transform 0.25s, box-shadow 0.25s;">
+        <img id="ActiveAvatarImg" src="" alt="avatar"
+             style="width:100%;height:100%;object-fit:cover;" />
+    </div>
+
     <div class="container">
 
         <section id="Start">
@@ -379,6 +389,12 @@
                             <button class="nav-link" id="nav-modes-tab" data-bs-toggle="tab"
                                 data-bs-target="#nav-modes" type="button" role="tab" aria-controls="nav-modes"
                                 aria-selected="false">Modes</button>
+                            <button class="nav-link" id="nav-news-tab" data-bs-toggle="tab"
+                                data-bs-target="#nav-news" type="button" role="tab" aria-controls="nav-news"
+                                aria-selected="false">News</button>
+                            <button class="nav-link" id="nav-avatars-tab" data-bs-toggle="tab"
+                                data-bs-target="#nav-avatars" type="button" role="tab" aria-controls="nav-avatars"
+                                aria-selected="false">Avatars</button>
                         </div>
                     </nav>
                     <div class="tab-content" id="nav-tabContent">
@@ -727,6 +743,46 @@
                                 <div id="ModesList" class="mt-3"></div>
                             </div>
 
+                        </div>
+
+                        <!-- Tab-5: News -->
+                        <div class="tab-pane fade" id="nav-news" role="tabpanel" aria-labelledby="nav-news-tab" tabindex="0">
+                            <div class="p-3">
+                                <p>Fetch news by category or search a topic. Say <em>"jarvis show me technology news"</em>.</p>
+                                <div class="d-flex mt-2">
+                                    <select id="NewsCategory" class="form-control glassy-form me-2" style="max-width:180px;">
+                                        <option value="general">General</option>
+                                        <option value="technology">Technology</option>
+                                        <option value="business">Business</option>
+                                        <option value="sports">Sports</option>
+                                        <option value="health">Health</option>
+                                        <option value="science">Science</option>
+                                        <option value="entertainment">Entertainment</option>
+                                        <option value="politics">Politics</option>
+                                        <option value="world">World</option>
+                                    </select>
+                                    <input type="text" class="form-control glassy-form me-2" id="NewsKeyword" placeholder="search term (optional)">
+                                    <button id="FetchNewsBtn" class="btn btn-glow">Fetch</button>
+                                </div>
+                                <div id="NewsList" class="mt-3"></div>
+                                <h6 class="text-light mt-4">Saved articles</h6>
+                                <div id="SavedNewsList"></div>
+                            </div>
+                        </div>
+
+                        <!-- Tab-6: Avatars -->
+                        <div class="tab-pane fade" id="nav-avatars" role="tabpanel" aria-labelledby="nav-avatars-tab" tabindex="0">
+                            <div class="p-3">
+                                <p>Create and manage avatars. Say <em>"jarvis create an avatar"</em>.</p>
+                                <div class="d-flex mt-2">
+                                    <input type="text" class="form-control glassy-form me-2" id="AvatarName" placeholder="avatar name">
+                                    <select id="AvatarStyle" class="form-control glassy-form me-2" style="max-width:180px;"></select>
+                                    <input type="text" class="form-control glassy-form me-2" id="AvatarSeed" placeholder="seed (optional)">
+                                    <button id="CreateAvatarBtn" class="btn btn-glow">Create</button>
+                                </div>
+                                <div id="AvatarsList" class="mt-3"
+                                     style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:12px;"></div>
+                            </div>
                         </div>
                     </div>
                 </div>

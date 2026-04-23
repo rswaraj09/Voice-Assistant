@@ -42,9 +42,15 @@ def init_mode_tables():
                 id INTEGER PRIMARY KEY,
                 mode_name VARCHAR(100) UNIQUE NOT NULL,
                 description TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active INTEGER DEFAULT 0
             )
         """)
+        # Additive migration — older DBs may lack is_active.
+        cur.execute("PRAGMA table_info(modes)")
+        cols = {row[1] for row in cur.fetchall()}
+        if "is_active" not in cols:
+            cur.execute("ALTER TABLE modes ADD COLUMN is_active INTEGER DEFAULT 0")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS mode_items (
                 id INTEGER PRIMARY KEY,
@@ -106,10 +112,31 @@ def list_modes():
     with _db_lock:
         con = _get_connection()
         cur = con.cursor()
-        cur.execute("SELECT id, mode_name, description FROM modes ORDER BY mode_name")
+        cur.execute("SELECT id, mode_name, description, is_active FROM modes ORDER BY mode_name")
         rows = cur.fetchall()
         con.close()
-    return [{"id": r[0], "name": r[1], "description": r[2] or ""} for r in rows]
+    return [{"id": r[0], "name": r[1], "description": r[2] or "", "is_active": bool(r[3])} for r in rows]
+
+
+def get_active_mode():
+    with _db_lock:
+        con = _get_connection()
+        cur = con.cursor()
+        cur.execute("SELECT id, mode_name FROM modes WHERE is_active = 1 LIMIT 1")
+        row = cur.fetchone()
+        con.close()
+    return {"id": row[0], "name": row[1]} if row else None
+
+
+def _set_active_mode(mode_id):
+    with _db_lock:
+        con = _get_connection()
+        cur = con.cursor()
+        cur.execute("UPDATE modes SET is_active = 0")
+        if mode_id is not None:
+            cur.execute("UPDATE modes SET is_active = 1 WHERE id = ?", (mode_id,))
+        con.commit()
+        con.close()
 
 
 def _get_mode_id(mode_name):
@@ -240,10 +267,17 @@ def _open_app(ref):
 
 def activate_mode(mode_name, item_delay=1.5):
     name = _normalize(mode_name)
+    mode_id = _get_mode_id(name)
     items = get_mode_items(name)
     if not items:
         speak(f"Mode {name} is empty or doesn't exist.")
         return False
+
+    _set_active_mode(mode_id)
+    try:
+        eel.noraActiveModeChanged(name)
+    except Exception:
+        pass
 
     speak(f"Activating {name} mode. Opening {len(items)} items.")
     for item in items:
@@ -259,6 +293,14 @@ def activate_mode(mode_name, item_delay=1.5):
     return True
 
 
+def deactivate_mode():
+    _set_active_mode(None)
+    try:
+        eel.noraActiveModeChanged(None)
+    except Exception:
+        pass
+
+
 # ── Voice-command text parsing ─────────────────────────────────────────────
 
 _OPEN_MODE_RE     = re.compile(r"\b(?:open|activate|start|launch)\s+(.+?)\s+mode\b", re.IGNORECASE)
@@ -266,6 +308,8 @@ _CREATE_MODE_RE   = re.compile(r"\bcreate\s+(?:a\s+|new\s+)?(?:mode\s+(?:called\
 _DELETE_MODE_RE   = re.compile(r"\b(?:delete|remove)\s+(.+?)\s+mode\b", re.IGNORECASE)
 _LIST_MODE_RE     = re.compile(r"\b(?:list|show)\s+(?:my\s+|all\s+)?modes\b", re.IGNORECASE)
 _ADD_TO_MODE_RE   = re.compile(r"\badd\s+(.+?)\s+to\s+(.+?)\s+mode\b", re.IGNORECASE)
+_DEACTIVATE_RE    = re.compile(r"\b(?:deactivate|exit|clear|end|stop)\s+(?:current\s+)?mode\b", re.IGNORECASE)
+_WHICH_MODE_RE    = re.compile(r"\b(?:what|which)\s+mode\b", re.IGNORECASE)
 
 
 def handle_mode_command(query):
@@ -277,6 +321,19 @@ def handle_mode_command(query):
         return False
 
     q = query.strip()
+
+    if _DEACTIVATE_RE.search(q):
+        deactivate_mode()
+        speak("Mode deactivated.")
+        return True
+
+    if _WHICH_MODE_RE.search(q):
+        active = get_active_mode()
+        if active:
+            speak(f"You're in {active['name']} mode.")
+        else:
+            speak("No mode is active right now.")
+        return True
 
     m = _LIST_MODE_RE.search(q)
     if m:
@@ -357,6 +414,17 @@ def uiRemoveModeItem(item_id):
 @eel.expose
 def uiActivateMode(name):
     threading.Thread(target=activate_mode, args=(name,), daemon=True).start()
+    return json.dumps({"ok": True})
+
+
+@eel.expose
+def uiGetActiveMode():
+    return json.dumps(get_active_mode() or {})
+
+
+@eel.expose
+def uiDeactivateMode():
+    deactivate_mode()
     return json.dumps({"ok": True})
 
 

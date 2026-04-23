@@ -314,6 +314,7 @@ def speak(text, use_cache=True):
     try:
         eel.DisplayMessage(text)
         eel.receiverText(text)
+        eel.noraAvatarState("speaking")
     except:
         pass
 
@@ -356,6 +357,10 @@ def speak(text, use_cache=True):
     finally:
         try:
             pygame.mixer.quit()
+        except:
+            pass
+        try:
+            eel.noraAvatarState("idle")
         except:
             pass
 
@@ -573,6 +578,18 @@ def process_query(query):
         if re.search(r'\bmodes?\b', query):
             from engine.modes import handle_mode_command
             if handle_mode_command(query):
+                return True
+
+        # ── NEWS — route before chat fallback
+        if re.search(r'\b(news|headlines|trending)\b', query):
+            from engine.news_aggregator import handle_news_command
+            if handle_news_command(query):
+                return True
+
+        # ── AVATAR
+        if re.search(r'\bavatars?\b', query):
+            from engine.avatar_generator import handle_avatar_command
+            if handle_avatar_command(query):
                 return True
 
         if re.search(r'\b(stop|go back|home|cancel|goodbye|bye|exit)\b', query):

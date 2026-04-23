@@ -411,7 +411,23 @@ svg {
   background: #353535;
 }
 .toast-container{
-  z-index: 9999; 
+  z-index: 9999;
 }
+
+/* ── Active avatar (main-UI display) ─────────────────────────────────── */
+#ActiveAvatarHost { animation: avatar-idle 4s ease-in-out infinite; }
+#ActiveAvatarHost.speaking {
+    animation: avatar-speak 0.7s ease-in-out infinite;
+    box-shadow: 0 0 28px rgba(0, 255, 170, 0.75);
+    border-color: rgba(0, 255, 170, 0.85);
+}
+#ActiveAvatarHost.thinking {
+    animation: avatar-think 1.4s ease-in-out infinite;
+    box-shadow: 0 0 18px rgba(255, 200, 0, 0.6);
+    border-color: rgba(255, 200, 0, 0.7);
+}
+@keyframes avatar-idle  { 0%,100%{transform:scale(1);} 50%{transform:scale(1.04);} }
+@keyframes avatar-speak { 0%,100%{transform:scale(1);}  50%{transform:scale(1.10);} }
+@keyframes avatar-think { 0%{transform:rotate(-3deg);} 50%{transform:rotate(3deg);} 100%{transform:rotate(-3deg);} }
 
 /* Table Scroll Property */

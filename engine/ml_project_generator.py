@@ -68,43 +68,40 @@ def handleMLGeneration(query):
     print(f"[MLGen] Dataset: {dataset_info['name']} | Source: {dataset_info['source']}")
     speak(f"Found dataset: {dataset_info['name']} from {dataset_info['source']}.")
 
-    # ── Generate all project files ────────────────────────────────────────
+    # ── Generate all project files — parallel batched ────────────────────
     speak("Generating your machine learning project files.")
     file_specs = _get_ml_file_specs(query, task_info, dataset_info, project_name)
-    generated_files = {}
     total = len(file_specs)
 
-    for i, (name, prompt) in enumerate(file_specs, 1):
-        print(f"[MLGen] Generating {i}/{total}: {name}")
-
-        if prompt.startswith("PREFILLED:"):
-            generated_files[name] = prompt[10:]
-            print(f"[MLGen] ✓ {name} (pre-filled)")
-            continue
-
-        for attempt in range(1, 4):
-            try:
-                # Configure fresh on every attempt — prevents stale state issues
-                genai.configure(api_key=LLM_KEY)
-                model    = genai.GenerativeModel("gemini-2.5-flash")
-                resp     = model.generate_content(prompt)
-                content  = resp.text.strip()
-                content  = re.sub(r'^```\w*\s*\n?', '', content)
-                content  = re.sub(r'\n?```\s*$',    '', content)
-                content  = content.strip()
-                if len(content) < 50:
-                    raise ValueError(f"Too short: {len(content)} chars")
-                generated_files[name] = content
-                print(f"[MLGen] ✓ {name} (attempt {attempt})")
-                break
-            except Exception as e:
-                print(f"[MLGen] ✗ {name} attempt {attempt}/3: {e}")
-                if attempt < 3:
-                    time.sleep(2)
-
-        time.sleep(0.5)
+    genai.configure(api_key=LLM_KEY)
+    from engine.code_generator import smart_generate_with_batching
+    generated_files = smart_generate_with_batching(file_specs, genai)
 
     print(f"[MLGen] Generated {len(generated_files)}/{total} files.")
+
+    # ── Deterministic fallback: if Gemini didn't produce train.py, inject a template
+    if "train.py" not in generated_files:
+        try:
+            from engine.model_trainer import generate_training_script
+            dataset_path = _infer_dataset_path(dataset_info)
+            framework = "sklearn" if task_info["task_type"] != "image_classification" else "tensorflow"
+            generated_files["train.py"] = generate_training_script(
+                task_info["task_type"], dataset_path, framework=framework
+            )
+            print("[MLGen] train.py injected from deterministic template.")
+        except Exception as e:
+            print(f"[MLGen] train.py fallback failed: {e}")
+
+    if "inference.py" not in generated_files:
+        try:
+            from engine.model_trainer import generate_inference_script
+            framework = "sklearn" if task_info["task_type"] != "image_classification" else "tensorflow"
+            generated_files["inference.py"] = generate_inference_script(
+                "model/model.pkl", framework=framework
+            )
+            print("[MLGen] inference.py injected from deterministic template.")
+        except Exception as e:
+            print(f"[MLGen] inference.py fallback failed: {e}")
 
     if not generated_files:
         speak("Sorry, generation failed completely. Please try again.")
@@ -354,6 +351,30 @@ def _search_datasets(query, task_info, llm_key):
     except Exception as e:
         print(f"[DataSearch] Kaggle API error: {e}")
 
+    # ── Fallback via dataset_finder (Kaggle CLI + HuggingFace + curated) ─
+    try:
+        from engine.dataset_finder import find_datasets
+        project_type_map = {
+            "regression":          "tabular-regression",
+            "classification":      "tabular-classification",
+            "nlp_classification":  "text-classification",
+            "image_classification":"image-classification",
+        }
+        pt = project_type_map.get(task_type, "tabular-classification")
+        candidates = find_datasets(pt, search_term)
+        if candidates:
+            first = candidates[0]
+            print(f"[DataSearch] dataset_finder suggested: {first.get('id')}")
+            return {
+                "name":          first.get("title") or first.get("id", search_term),
+                "source":        first.get("source", "curated"),
+                "url":           first.get("url", "sklearn"),
+                "target_col":    _guess_target_column(task_info),
+                "download_code": "DIRECT_CSV" if str(first.get("url", "")).startswith("http") else "SKLEARN",
+            }
+    except Exception as e:
+        print(f"[DataSearch] dataset_finder fallback skipped: {e}")
+
     # ── Fallback: sklearn built-in by task ────────────────────────────────
     fallback_map = {
         "regression":         {
@@ -386,6 +407,14 @@ def _build_kaggle_search_term(query, task_info):
              "want", "need", "please", "system", "application"}
     keywords = [w for w in words if w not in stop][:3]
     return " ".join(keywords) if keywords else task_info["target"]
+
+
+def _infer_dataset_path(dataset_info):
+    """Pick a sensible default path the fallback train.py template can read."""
+    url = dataset_info.get("url", "")
+    if url.startswith("http"):
+        return os.path.join("data", os.path.basename(url) or "dataset.csv")
+    return "data/dataset.csv"
 
 
 def _guess_target_column(task_info):

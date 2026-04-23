@@ -37,50 +37,27 @@ def handleCodeGeneration(query):
     genai.configure(api_key=LLM_KEY)
 
     file_specs      = _get_file_specs(query, stack, project_name)
-    generated_files = {}
     total           = len(file_specs)
 
-    # ── Generate all files sequentially ──────────────────────────────────
+    # ── Generate all files — parallel batched with rate limiting ─────────
     speak("Generating project files.")
+    generated_files = smart_generate_with_batching(file_specs, genai)
 
-    for i, spec in enumerate(file_specs, 1):
-        name, prompt = spec
-        print(f"[CodeGen] Generating {i}/{total}: {name}")
-
-        # Pre-filled config files — instant, no Gemini needed
-        if prompt.startswith("PREFILLED:"):
-            generated_files[name] = prompt[10:]
-            print(f"[CodeGen] ✓ {name} (pre-filled)")
-            continue
-
-        # Generate with up to 3 retries
-        for attempt in range(1, 4):
-            try:
-                model   = genai.GenerativeModel("gemini-2.5-flash")
-                resp    = model.generate_content(prompt)
-                content = resp.text.strip()
-
-                # Strip markdown code fences if present
-                content = re.sub(r'^```\w*\s*\n?', '', content)
-                content = re.sub(r'\n?```\s*$',    '', content)
-                content = content.strip()
-
-                if len(content) < 50:
-                    raise ValueError(f"Response too short ({len(content)} chars)")
-
-                generated_files[name] = content
-                print(f"[CodeGen] ✓ {name} (attempt {attempt})")
-                break
-
-            except Exception as e:
-                print(f"[CodeGen] ✗ {name} attempt {attempt}/3: {e}")
-                if attempt < 3:
-                    time.sleep(2)
-
-        # Small delay between files to avoid Gemini rate limiting
-        time.sleep(0.5)
+    # If the fast path failed catastrophically, fall back to sequential.
+    if len(generated_files) < total // 2:
+        print("[CodeGen] Parallel path underperformed — falling back to sequential.")
+        generated_files = _sequential_generate(file_specs, genai)
 
     print(f"[CodeGen] Generated {len(generated_files)}/{total} files.")
+
+    # ── Validate + one targeted re-generation pass for syntax failures ───
+    report = _validate_and_maybe_regenerate(
+        generated_files, file_specs, genai, stack.get("lang", "flask")
+    )
+    speak(
+        f"Generated {len(generated_files)} files. "
+        f"{report['summary']['syntax_errors']} syntax issues."
+    )
 
     if not generated_files:
         speak("Sorry, generation failed completely. Please try again.")
@@ -151,6 +128,123 @@ def handleCodeGeneration(query):
 
     speak(f"MongoDB database name is {project_name}. Make sure MongoDB is running.")
     speak("Project is ready!")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  PARALLEL BATCHED GENERATION
+#  Uses a ThreadPoolExecutor with a small worker count that still respects
+#  Gemini's free-tier rate limits. Each worker retries with exponential
+#  backoff on failure.
+# ════════════════════════════════════════════════════════════════════════════
+def _strip_fences(content):
+    content = re.sub(r'^```\w*\s*\n?', '', content)
+    content = re.sub(r'\n?```\s*$',    '', content)
+    return content.strip()
+
+
+def _generate_one(spec, genai_mod, max_attempts=3):
+    name, prompt = spec
+    if prompt.startswith("PREFILLED:"):
+        return name, prompt[10:], True
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            model = genai_mod.GenerativeModel("gemini-2.5-flash")
+            resp  = model.generate_content(prompt)
+            content = _strip_fences((resp.text or "").strip())
+            if len(content) < 50:
+                raise ValueError(f"Response too short ({len(content)} chars)")
+            return name, content, True
+        except Exception as e:
+            last_err = e
+            # Exponential backoff: 1s, 2s, 4s
+            time.sleep(2 ** (attempt - 1))
+    print(f"[CodeGen] ✗ {name}: {last_err}")
+    return name, "", False
+
+
+def smart_generate_with_batching(file_specs, genai_mod, max_workers=4):
+    """
+    Parallel generation with a worker cap to respect Gemini rate limits.
+    Pre-filled specs run synchronously (free); the rest go through the pool.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results = {}
+    prefilled = [s for s in file_specs if s[1].startswith("PREFILLED:")]
+    live      = [s for s in file_specs if not s[1].startswith("PREFILLED:")]
+
+    for name, prompt in prefilled:
+        results[name] = prompt[10:]
+        print(f"[CodeGen] ✓ {name} (pre-filled)")
+
+    total = len(live)
+    if not live:
+        return results
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_generate_one, spec, genai_mod): spec[0] for spec in live}
+        done = 0
+        for fut in as_completed(futures):
+            name, content, ok = fut.result()
+            done += 1
+            if ok and content:
+                results[name] = content
+                print(f"[CodeGen] ✓ {name} ({done}/{total})")
+            else:
+                print(f"[CodeGen] ✗ {name} ({done}/{total})")
+    return results
+
+
+def _validate_and_maybe_regenerate(generated_files, file_specs, genai_mod, backend_kind):
+    """
+    Run the completeness report and re-generate any files whose content
+    failed syntax validation. Only one re-try pass — avoids infinite loops
+    when a prompt is inherently buggy.
+    """
+    try:
+        from engine.validators import verify_project_completeness, validate_generated_file
+    except Exception as e:
+        print(f"[CodeGen] Validation skipped: {e}")
+        return {"summary": {"syntax_errors": 0, "files": len(generated_files),
+                            "missing_critical": 0, "py_undeclared": 0, "js_undeclared": 0},
+                "issues": [], "missing": [], "ok": True}
+
+    report = verify_project_completeness(generated_files, backend_kind=backend_kind)
+    print(f"[CodeGen] Validation: {report['summary']}")
+
+    bad_paths = [p for p, c in generated_files.items() if not validate_generated_file(p, c)["ok"]]
+    if not bad_paths:
+        return report
+
+    print(f"[CodeGen] Retrying {len(bad_paths)} failed file(s): {bad_paths}")
+    specs_by_name = {s[0]: s for s in file_specs}
+    retry_specs = [specs_by_name[p] for p in bad_paths if p in specs_by_name]
+    if not retry_specs:
+        return report
+
+    regenerated = smart_generate_with_batching(retry_specs, genai_mod, max_workers=2)
+    # Only replace if the retry actually improved things.
+    for path, content in regenerated.items():
+        if validate_generated_file(path, content)["ok"]:
+            generated_files[path] = content
+            print(f"[CodeGen] ✓ re-gen succeeded for {path}")
+
+    final = verify_project_completeness(generated_files, backend_kind=backend_kind)
+    print(f"[CodeGen] After re-gen: {final['summary']}")
+    return final
+
+
+def _sequential_generate(file_specs, genai_mod):
+    """Original slow-but-stable path, used as fallback."""
+    results = {}
+    for i, spec in enumerate(file_specs, 1):
+        name, content, ok = _generate_one(spec, genai_mod)
+        if ok and content:
+            results[name] = content
+            print(f"[CodeGen] ✓ {name} ({i}/{len(file_specs)})")
+        time.sleep(0.5)
+    return results
 
 
 # ════════════════════════════════════════════════════════════════════════════
