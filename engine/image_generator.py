@@ -7,15 +7,14 @@ from datetime import datetime
 import google.generativeai as genai
 from engine.config import LLM_KEY
 
-# ── Save location — Pictures\JarvisGallery ────────────────────────────────
+#  Save location — Pictures\JarvisGallery 
 GALLERY_DIR = os.path.join(os.path.expanduser("~"), "Pictures", "JarvisGallery")
 os.makedirs(GALLERY_DIR, exist_ok=True)
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  EXTRACT PROMPT FROM VOICE QUERY
 #  Strips trigger words and keeps the actual description
-# ════════════════════════════════════════════════════════════════════════════
+
 def extract_image_prompt(query: str) -> str:
     query = query.lower().strip()
     patterns = [
@@ -39,9 +38,9 @@ def extract_image_prompt(query: str) -> str:
     return query
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  DETECT STYLE
-# ════════════════════════════════════════════════════════════════════════════
+
 def detect_style(query: str) -> str:
     query = query.lower()
     if any(w in query for w in ["animated", "anime", "cartoon", "2d", "pixar", "illustrated", "drawing"]):
@@ -52,9 +51,8 @@ def detect_style(query: str) -> str:
         return "realistic"  # default
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  ENHANCE PROMPT — ask Gemini to make the prompt richer
-# ════════════════════════════════════════════════════════════════════════════
+
 def enhance_prompt(raw_prompt: str, style: str = "realistic") -> str:
     try:
         genai.configure(api_key=LLM_KEY)
@@ -85,9 +83,9 @@ def enhance_prompt(raw_prompt: str, style: str = "realistic") -> str:
             return raw_prompt + ", 4K, photorealistic, high detail, professional photography"
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  GENERATE IMAGE — using Pollinations.ai (free, no API key needed)
-# ════════════════════════════════════════════════════════════════════════════
+
 def generate_image(prompt: str) -> str | None:
     """
     Uses Pollinations.ai free API — no key needed.
@@ -142,9 +140,9 @@ def generate_image(prompt: str) -> str | None:
         return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  OPEN IMAGE — opens with default Windows photo viewer
-# ════════════════════════════════════════════════════════════════════════════
+
 def open_image(filepath: str):
     try:
         os.startfile(filepath)  # opens with default photo app on Windows
@@ -157,9 +155,9 @@ def open_image(filepath: str):
             pass
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  MAIN HANDLER — called from command.py
-# ════════════════════════════════════════════════════════════════════════════
+
 def handleImageGeneration(query: str, speak_fn):
     """
     Full pipeline:

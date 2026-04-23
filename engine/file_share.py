@@ -11,9 +11,9 @@ from PIL import ImageGrab
 import json
 from engine.config import LLM_KEY
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  GEMINI VISION — Screen-based file detection
-# ════════════════════════════════════════════════════════════════════════════
+
 def get_gemini_client():
     """Initialize Gemini client."""
     try:
@@ -181,9 +181,9 @@ def find_file_smart(filename: str, speak_fn=None) -> str | None:
     
     return None
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  EXCEL → PDF CONVERTER
-# ════════════════════════════════════════════════════════════════════════════
+
 def convert_excel_to_pdf(excel_path: str, speak_fn) -> str | None:
     """
     Converts .xlsx to .pdf using LibreOffice (silent, fastest method).
@@ -198,7 +198,7 @@ def convert_excel_to_pdf(excel_path: str, speak_fn) -> str | None:
     pdf_path = os.path.splitext(excel_path)[0] + ".pdf"
     out_dir  = os.path.dirname(excel_path)
 
-    # ── Method 1: LibreOffice (silent, no UI) ────────────────────────────
+    #  Method 1: LibreOffice (silent, no UI) 
     libre = _find_libreoffice()
     if libre:
         try:
@@ -214,7 +214,7 @@ def convert_excel_to_pdf(excel_path: str, speak_fn) -> str | None:
         except Exception as e:
             print(f"[FileShare] LibreOffice error: {e}")
 
-    # ── Method 2: win32com (MS Excel must be installed) ──────────────────
+    #  Method 2: win32com (MS Excel must be installed) 
     try:
         import win32com.client
         print(f"[FileShare] Converting via MS Excel COM...")
@@ -252,9 +252,8 @@ def _find_libreoffice() -> str | None:
     return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  DETECT ACTIVE EXCEL FILE — finds the currently open workbook
-# ════════════════════════════════════════════════════════════════════════════
+
 def get_active_excel_path() -> str | None:
     """Finds the path of the currently open Excel file via COM, psutil or title."""
     # 1. Try COM (Most reliable for focus detection)
@@ -449,9 +448,9 @@ def get_active_file_path() -> str | None:
     return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  SEND VIA WHATSAPP DESKTOP (native UI automation)
-# ════════════════════════════════════════════════════════════════════════════
+
 def send_whatsapp_file(contact_name: str, file_path: str, speak_fn) -> bool:
     """
     Opens WhatsApp Desktop, searches for contact, attaches file using file picker,
@@ -467,11 +466,11 @@ def send_whatsapp_file(contact_name: str, file_path: str, speak_fn) -> bool:
 
     speak_fn(f"Opening WhatsApp Desktop and searching for {contact_name}.")
 
-    # ── Step 1: Open WhatsApp Desktop ────────────────────────────────────
+    #  Step 1: Open WhatsApp Desktop 
     _open_whatsapp_desktop()
     time.sleep(3)
 
-    # ── Step 2: Search for contact using Ctrl+F ──────────────────────────
+    #  Step 2: Search for contact using Ctrl+F 
     print(f"[FileShare] Searching for contact: {contact_name}")
     pyautogui.hotkey("ctrl", "f")
     time.sleep(1)
@@ -489,7 +488,7 @@ def send_whatsapp_file(contact_name: str, file_path: str, speak_fn) -> bool:
     pyautogui.press("enter")
     time.sleep(2)
 
-    # ── Step 3: Open attachment using native Windows file picker ────────
+    #  Step 3: Open attachment using native Windows file picker 
     print("[FileShare] Opening file attachment dialog...")
     
     # Use Windows file picker (explorer) directly and copy file
@@ -532,7 +531,7 @@ def send_whatsapp_file(contact_name: str, file_path: str, speak_fn) -> bool:
         speak_fn("There was an issue attaching the file. Please try again.")
         return False
 
-    # ── Step 4: Send message ────────────────────────────────────────────
+    #  Step 4: Send message 
     print("[FileShare] Sending file to WhatsApp...")
     # Click send button (usually Enter key)
     pyautogui.press("enter")
@@ -670,9 +669,8 @@ def _get_whatsapp_window():
     return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  UPLOAD TO GOOGLE DRIVE (browser automation)
-# ════════════════════════════════════════════════════════════════════════════
+
 def upload_to_google_drive(file_path: str, speak_fn) -> bool:
     """
     Opens Google Drive in Chrome, uploads the file using drag-drop API
@@ -688,11 +686,11 @@ def upload_to_google_drive(file_path: str, speak_fn) -> bool:
 
     speak_fn("Opening Google Drive. Please wait while I upload the file.")
 
-    # ── Step 1: Open Google Drive ─────────────────────────────────────────
+    #  Step 1: Open Google Drive 
     webbrowser.open("https://drive.google.com/drive/my-drive")
     time.sleep(5)   # wait for Drive to load
 
-    # ── Step 2: Focus Chrome window ──────────────────────────────────────
+    #  Step 2: Focus Chrome window 
     chrome_win = None
     for win in gw.getAllWindows():
         if "Google Drive" in win.title and ("Chrome" in win.title or "Brave" in win.title or "Edge" in win.title):
@@ -704,14 +702,14 @@ def upload_to_google_drive(file_path: str, speak_fn) -> bool:
         pyautogui.hotkey("alt", "tab")
         time.sleep(1)
 
-    # ── Step 3: Use keyboard shortcut to open file upload ─────────────────
+    #  Step 3: Use keyboard shortcut to open file upload 
     # Google Drive shortcut: press 'c' to open New menu, then 'u' for upload
     pyautogui.press("c")
     time.sleep(1.5)
     pyautogui.press("u")           # "Upload file"
     time.sleep(2)
 
-    # ── Step 4: File picker dialog — paste path ───────────────────────────
+    #  Step 4: File picker dialog — paste path 
     pyperclip.copy(file_path)
     pyautogui.hotkey("ctrl", "a")
     pyautogui.hotkey("ctrl", "v")
@@ -723,9 +721,9 @@ def upload_to_google_drive(file_path: str, speak_fn) -> bool:
     return True
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  SEND VIA EMAIL
-# ════════════════════════════════════════════════════════════════════════════
+
 def send_file_via_email(contact_name: str, file_path: str, speak_fn) -> bool:
     """Send file as email attachment using your existing email_handler."""
     from engine.email_handler import send_email_with_attachment
@@ -743,9 +741,8 @@ def send_file_via_email(contact_name: str, file_path: str, speak_fn) -> bool:
         return False
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  DETECT SHARE DESTINATION FROM QUERY
-# ════════════════════════════════════════════════════════════════════════════
+
 def detect_share_destination(query: str) -> dict:
     """
     Returns: {
@@ -795,9 +792,8 @@ def detect_share_destination(query: str) -> dict:
     return result
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  MAIN HANDLER — called from command.py
-# ════════════════════════════════════════════════════════════════════════════
+
 def handleFileShareCommand(query: str, speak_fn, takecommand_fn):
     """
     Full pipeline with automatic file detection:
@@ -808,11 +804,11 @@ def handleFileShareCommand(query: str, speak_fn, takecommand_fn):
     5. Execute share to detected platform
     """
 
-    # ── Step 0a: Extract contact name and platform FIRST ──────────────────
+    #  Step 0a: Extract contact name and platform FIRST 
     dest = detect_share_destination(query)
     print(f"[FileShare] Detected platform: {dest['platform']}, contact: {dest['contact']}")
 
-    # ── Step 0b: Try automatic file detection ─────────────────────────────
+    # Step 0b: Try automatic file detection 
     file_path = None
     
     # Priority 1: Check active document in Office apps (most reliable)
@@ -858,7 +854,7 @@ def handleFileShareCommand(query: str, speak_fn, takecommand_fn):
             file_path = detected_files[0]  # Use first detected file
             speak_fn(f"Found {os.path.basename(file_path)} on your screen.")
     
-    # ── Step 1: Is this a convert + share request? ────────────────────────
+    # Step 1: Is this a convert + share request? 
     needs_conversion = bool(re.search(
         r'\b(convert|turn|change)\b.{0,20}\b(excel|xlsx|spreadsheet)\b.{0,20}\b(pdf)\b',
         query, re.IGNORECASE
@@ -906,7 +902,7 @@ def handleFileShareCommand(query: str, speak_fn, takecommand_fn):
     print(f"[FileShare] Will share: {file_path}")
     speak_fn(f"Found {os.path.basename(file_path)}. Ready to share.")
 
-    # ── Step 2: Confirm platform (already detected in Step 0) ──────────────
+    # Step 2: Confirm platform (already detected in Step 0) 
     if not dest["platform"]:
         speak_fn("Where should I send it? Say WhatsApp, Google Drive, or Email.")
         platform_query = takecommand_fn()
@@ -920,12 +916,12 @@ def handleFileShareCommand(query: str, speak_fn, takecommand_fn):
             speak_fn("I didn't catch that. Cancelling.")
             return
 
-    # ── Step 3: Get contact name if needed ────────────────────────────────
+    # Step 3: Get contact name if needed 
     if dest["platform"] in ["whatsapp", "email"] and not dest["contact"]:
         speak_fn("Who should I send it to?")
         dest["contact"] = takecommand_fn()
 
-    # ── Step 4: Execute ───────────────────────────────────────────────────
+    #  Step 4: Execute 
     if dest["platform"] == "whatsapp":
         threading.Thread(
             target=send_whatsapp_file,

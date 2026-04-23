@@ -8,15 +8,6 @@ import webbrowser
 import requests
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  AI / ML PROJECT GENERATOR
-#  Flow:
-#    1. Understand the ML task from query
-#    2. Search Kaggle + UCI + GitHub for a matching dataset
-#    3. Generate full ML pipeline (train.py) — trains model + saves .pkl
-#    4. Generate Flask prediction app (app.py + templates)
-#    5. Install deps → run training → launch web app
-# ════════════════════════════════════════════════════════════════════════════
 
 def handleMLGeneration(query):
     from engine.command import speak, takecommand
@@ -24,7 +15,7 @@ def handleMLGeneration(query):
     import google.generativeai as genai
     import os
     
-    # ── TEMP DEBUG — remove after fixing ─────────────────────────────────
+    #  TEMP DEBUG — remove after fixing 
     print(f"[DEBUG] LLM_KEY value: '{LLM_KEY}'")
     print(f"[DEBUG] CWD: {os.getcwd()}")
     
@@ -40,35 +31,35 @@ def handleMLGeneration(query):
             # Mask the key for safety while printing
             masked = content.replace(LLM_KEY, '***') if LLM_KEY and len(LLM_KEY) > 5 else content
             print(f"[DEBUG] .env contents:\n{masked}")
-    # ─────────────────────────────────────────────────────────────────────
+    
 
     speak("Sure! Let me set up your machine learning project.")
 
-    # ── Validate API key early ────────────────────────────────────────────
+    #  Validate API key early 
     if not LLM_KEY:
         speak("API key is missing. Please check your config file.")
         print("[MLGen] ERROR: LLM_KEY is empty or None in engine/config.py")
         return
 
-    # ── Where to save ─────────────────────────────────────────────────────
+    #  Where to save 
     speak("Where would you like to save this project?")
     save_path_response = takecommand()
     save_dir     = _parse_save_path(save_path_response)
     project_name = _extract_project_name(query)
     project_dir  = os.path.join(save_dir, project_name)
 
-    # ── Understand ML task ────────────────────────────────────────────────
+    #  Understand ML task 
     task_info = _analyze_ml_task(query)
     speak(f"Detected task: {task_info['task_type']}. Target: {task_info['target']}.")
     print(f"[MLGen] Task: {task_info}")
 
-    # ── Search for datasets ───────────────────────────────────────────────
+    #  Search for datasets 
     speak("Searching for suitable datasets online.")
     dataset_info = _search_datasets(query, task_info, LLM_KEY)
     print(f"[MLGen] Dataset: {dataset_info['name']} | Source: {dataset_info['source']}")
     speak(f"Found dataset: {dataset_info['name']} from {dataset_info['source']}.")
 
-    # ── Generate all project files — parallel batched ────────────────────
+    #  Generate all project files — parallel batched 
     speak("Generating your machine learning project files.")
     file_specs = _get_ml_file_specs(query, task_info, dataset_info, project_name)
     total = len(file_specs)
@@ -79,7 +70,7 @@ def handleMLGeneration(query):
 
     print(f"[MLGen] Generated {len(generated_files)}/{total} files.")
 
-    # ── Deterministic fallback: if Gemini didn't produce train.py, inject a template
+    #  Deterministic fallback: if Gemini didn't produce train.py, inject a template
     if "train.py" not in generated_files:
         try:
             from engine.model_trainer import generate_training_script
@@ -107,11 +98,11 @@ def handleMLGeneration(query):
         speak("Sorry, generation failed completely. Please try again.")
         return
 
-    # ── Write files to disk ───────────────────────────────────────────────
+    #  Write files to disk 
     speak(f"Creating {len(generated_files)} project files.")
     _write_project_files(project_dir, generated_files, project_name, task_info, dataset_info)
 
-    # ── Install dependencies ──────────────────────────────────────────────
+    #  Install dependencies 
     speak("Installing Python dependencies. This may take a minute.")
     install_cmd = (
         "pip install flask scikit-learn pandas numpy matplotlib seaborn "
@@ -126,14 +117,14 @@ def handleMLGeneration(query):
         print(f"[MLGen] Install error: {e}")
         speak("Please check your internet connection for installing packages.")
 
-    # ── Open in VS Code ───────────────────────────────────────────────────
+    #  Open in VS Code 
     speak("Open the project in VS Code?")
     from engine.command import takecommand as tc
     if _yes(tc()):
         _open_in_vscode(project_dir)
         speak("Opened in VS Code.")
 
-    # ── Train the model ───────────────────────────────────────────────────
+    #  Train the model 
     speak("Should I run the model training now?")
     if _yes(tc()):
         speak("Starting model training. I'll let you know when it's done.")
@@ -145,7 +136,7 @@ def handleMLGeneration(query):
     else:
         speak("You can train later by running: python train.py")
 
-    # ── Launch prediction web app ─────────────────────────────────────────
+    #  Launch prediction web app 
     speak("Should I start the prediction web app?")
     if _yes(tc()):
         speak("Starting the prediction app at http://localhost:5000")
@@ -156,9 +147,8 @@ def handleMLGeneration(query):
     speak(f"Your ML project '{project_name}' is ready! The trained model is saved as model.pkl.")
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  ANALYZE ML TASK FROM QUERY
-# ════════════════════════════════════════════════════════════════════════════
+
 def _analyze_ml_task(query):
     q = query.lower()
 
@@ -224,9 +214,9 @@ def _analyze_ml_task(query):
     }
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  SEARCH DATASETS — Kaggle API → UCI → GitHub fallback
-# ════════════════════════════════════════════════════════════════════════════
+
 def _search_datasets(query, task_info, llm_key):
     """
     Priority:
@@ -239,7 +229,7 @@ def _search_datasets(query, task_info, llm_key):
     q           = query.lower()
     task_type   = task_info["task_type"]
 
-    # ── Pre-mapped famous datasets (instant, reliable) ────────────────────
+    #  Pre-mapped famous datasets (instant, reliable) 
     KNOWN_DATASETS = {
         "titanic":    {
             "name": "Titanic Survival",
@@ -325,7 +315,7 @@ def _search_datasets(query, task_info, llm_key):
             print(f"[DataSearch] Matched known dataset: {info['name']}")
             return info
 
-    # ── Kaggle public search API ──────────────────────────────────────────
+    #  Kaggle public search API 
     search_term = _build_kaggle_search_term(query, task_info)
     print(f"[DataSearch] Kaggle search: {search_term}")
     try:
@@ -351,7 +341,7 @@ def _search_datasets(query, task_info, llm_key):
     except Exception as e:
         print(f"[DataSearch] Kaggle API error: {e}")
 
-    # ── Fallback via dataset_finder (Kaggle CLI + HuggingFace + curated) ─
+    #  Fallback via dataset_finder (Kaggle CLI + HuggingFace + curated) 
     try:
         from engine.dataset_finder import find_datasets
         project_type_map = {
@@ -375,7 +365,7 @@ def _search_datasets(query, task_info, llm_key):
     except Exception as e:
         print(f"[DataSearch] dataset_finder fallback skipped: {e}")
 
-    # ── Fallback: sklearn built-in by task ────────────────────────────────
+    #  Fallback: sklearn built-in by task 
     fallback_map = {
         "regression":         {
             "name": "California Housing", "source": "sklearn built-in",
@@ -427,9 +417,6 @@ def _guess_target_column(task_info):
     return target_col_map.get(task_info["task_type"], "target")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  GENERATE FILE SPECS
-# ════════════════════════════════════════════════════════════════════════════
 def _get_ml_file_specs(query, task_info, dataset_info, project_name):
     task_type   = task_info["task_type"]
     algorithms  = task_info["algorithms"]
@@ -439,7 +426,7 @@ def _get_ml_file_specs(query, task_info, dataset_info, project_name):
     download_code = dataset_info["download_code"]
     dataset_url   = dataset_info["url"]
 
-    # ── Build data loading snippet ────────────────────────────────────────
+    #  Build data loading snippet 
     if download_code == "SKLEARN":
         data_load = """
 from sklearn.datasets import load_iris
@@ -503,7 +490,7 @@ if TARGET_COL not in df.columns:
     print(f"[Data] Using: {{TARGET_COL}}")
 """
 
-    # ── train.py prompt ───────────────────────────────────────────────────
+    #  train.py prompt 
     train_prompt = f"""Write a COMPLETE, production-quality Python ML training script for: "{query}"
 
 Dataset: {dataset_name}
@@ -577,7 +564,7 @@ CRITICAL RULES:
 
 Return ONLY complete Python code, no markdown."""
 
-    # ── app.py prompt ─────────────────────────────────────────────────────
+    #  app.py prompt 
     app_prompt = f"""Write a COMPLETE Flask web app for serving ML predictions for: "{query}"
 
 Task type: {task_type}
@@ -601,7 +588,7 @@ CRITICAL:
 
 Return ONLY complete Python Flask code, no markdown."""
 
-    # ── index.html prompt ─────────────────────────────────────────────────
+    #  index.html prompt 
     index_html_prompt = f"""Write a COMPLETE, beautiful HTML template for an ML prediction web app for: "{query}"
 
 Requirements:
@@ -628,7 +615,7 @@ Requirements:
 
 Return ONLY complete HTML, no markdown."""
 
-    # ── reports.html prompt ───────────────────────────────────────────────
+    #  reports.html prompt 
     reports_html_prompt = f"""Write a COMPLETE HTML template for displaying ML model reports for: "{query}"
 
 Requirements:
@@ -648,7 +635,7 @@ Requirements:
 
 Return ONLY complete HTML, no markdown."""
 
-    # ── Requirements ──────────────────────────────────────────────────────
+    #  Requirements 
     requirements_txt = (
         "PREFILLED:flask\n"
         "scikit-learn\n"
@@ -662,7 +649,7 @@ Return ONLY complete HTML, no markdown."""
         "plotly\n"
     )
 
-    # ── README ─────────────────────────────────────────────────────────────
+    # README 
     readme = f"""PREFILLED:# {project_name.replace('_', ' ').title()}
 
 **ML Task:** {task_type}  
@@ -728,9 +715,6 @@ curl -X POST http://localhost:5000/api/predict \\
     ]
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  WRITE PROJECT FILES TO DISK
-# ════════════════════════════════════════════════════════════════════════════
 def _write_project_files(project_dir, generated_files, project_name, task_info, dataset_info):
     try:
         for subdir in ["model", "reports", "templates", "static/css"]:
@@ -747,7 +731,7 @@ def _write_project_files(project_dir, generated_files, project_name, task_info, 
                 f.write(content)
             print(f"[MLGen] Created: {filename}")
 
-        # ── .gitignore ─────────────────────────────────────────────────────
+        # .gitignore 
         gitignore = "__pycache__/\n*.pyc\n.env\nmodel/\nreports/\n*.csv\n*.zip\n"
         with open(os.path.join(project_dir, ".gitignore"), 'w') as f:
             f.write(gitignore)
@@ -759,9 +743,7 @@ def _write_project_files(project_dir, generated_files, project_name, task_info, 
         return False
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  RUN MODEL TRAINING IN A NEW TERMINAL WINDOW
-# ════════════════════════════════════════════════════════════════════════════
+# RUN MODEL TRAINING IN A NEW TERMINAL WINDOW
 def _run_training(project_dir):
     try:
         # Open a visible terminal so user can monitor training progress
@@ -777,9 +759,6 @@ def _run_training(project_dir):
         return False
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  HELPERS (shared with code_generator pattern)
-# ════════════════════════════════════════════════════════════════════════════
 def _extract_project_name(query):
     match = re.search(
         r'(?:create|make|build|generate|train|develop)\s+(?:a\s+|an\s+)?(.+?)(?:\s+model|\s+project|\s+in\s+|\s+using\s+|$)',

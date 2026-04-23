@@ -1,8 +1,6 @@
 from engine.command import speak
 
-# ════════════════════════════════════════════════════════════════════════════
-#  🔊 VOLUME CONTROLS
-# ════════════════════════════════════════════════════════════════════════════
+#  VOLUME CONTROLS 
 
 def _get_volume_interface():
     try:
@@ -104,9 +102,7 @@ def unmuteVolume():
         speak("Couldn't unmute volume.")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  ☀️ BRIGHTNESS CONTROLS
-# ════════════════════════════════════════════════════════════════════════════
+#  BRIGHTNESS CONTROLS 
 
 def _get_current_brightness() -> int:
     """Get current screen brightness (0-100)."""

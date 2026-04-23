@@ -5,7 +5,7 @@ import pygetwindow as gw
 import pyperclip
 from engine.command import speak
 
-# ── CALIBRATED COORDINATES (your 1920x1080 screen) ───────────────────────────
+#  CALIBRATED COORDINATES (your 1920x1080 screen) 
 CALL_BTN_X  = 1711
 CALL_BTN_Y  = 77
 VOICE_OPT_X = 1475
@@ -14,9 +14,7 @@ VIDEO_OPT_X = 1673
 VIDEO_OPT_Y = 210
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  HELPER: Open WhatsApp
-# ════════════════════════════════════════════════════════════════════════════
+#  HELPER: Open WhatsApp 
 def open_whatsapp():
     """Always open WhatsApp via URL to ensure it launches and is ready."""
     import os
@@ -27,9 +25,7 @@ def open_whatsapp():
     time.sleep(6)  # wait for WhatsApp to fully launch
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  HELPER: Focus WhatsApp window
-# ════════════════════════════════════════════════════════════════════════════
+#  HELPER: Focus WhatsApp window 
 def focus_whatsapp():
     try:
         windows = gw.getWindowsWithTitle('WhatsApp')
@@ -48,9 +44,7 @@ def focus_whatsapp():
     return False
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  HELPER: Search and open contact
-# ════════════════════════════════════════════════════════════════════════════
+#  HELPER: Search and open contact 
 def search_and_open_contact(name: str):
     """
     Use Ctrl+F to search for contact by name,
@@ -85,9 +79,8 @@ def search_and_open_contact(name: str):
     print(f"[WhatsApp] Opened chat for: {name}")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  MAKE VOICE CALL
-# ════════════════════════════════════════════════════════════════════════════
+#  MAKE VOICE CALL 
+
 def makeWhatsAppVoiceCall(mobile_no, name):
     speak(f"Calling {name} on WhatsApp.")
 
@@ -118,9 +111,8 @@ def makeWhatsAppVoiceCall(mobile_no, name):
     speak(f"Voice call started with {name}.")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  MAKE VIDEO CALL
-# ════════════════════════════════════════════════════════════════════════════
+#  MAKE VIDEO CALL 
+
 def makeWhatsAppVideoCall(mobile_no, name):
     speak(f"Starting video call with {name} on WhatsApp.")
 

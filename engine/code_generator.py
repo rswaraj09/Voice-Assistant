@@ -7,15 +7,6 @@ import threading
 import webbrowser
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  FULL-STACK PROJECT GENERATOR
-#  - Sequential file generation (no parallel)
-#  - 0.5s delay between files (avoids Gemini rate limiting)
-#  - 3 retries per file if generation fails
-#  - Guaranteed MongoDB connection injection
-#  - Removes in-memory fake DB lists Gemini generates
-#  - No csrf_token
-# ════════════════════════════════════════════════════════════════════════════
 
 def handleCodeGeneration(query):
     from engine.command import speak, takecommand
@@ -24,7 +15,7 @@ def handleCodeGeneration(query):
 
     speak("Sure!")
 
-    # ── Ask where to save ─────────────────────────────────────────────────
+    # Ask where to save
     speak("Where would you like to save this project?")
     save_path_response = takecommand()
     save_dir     = _parse_save_path(save_path_response)
@@ -39,7 +30,7 @@ def handleCodeGeneration(query):
     file_specs      = _get_file_specs(query, stack, project_name)
     total           = len(file_specs)
 
-    # ── Generate all files — parallel batched with rate limiting ─────────
+    # Generate all files — parallel batched with rate limiting
     speak("Generating project files.")
     generated_files = smart_generate_with_batching(file_specs, genai)
 
@@ -50,7 +41,7 @@ def handleCodeGeneration(query):
 
     print(f"[CodeGen] Generated {len(generated_files)}/{total} files.")
 
-    # ── Validate + one targeted re-generation pass for syntax failures ───
+    # Validate + one targeted re-generation pass for syntax failures
     report = _validate_and_maybe_regenerate(
         generated_files, file_specs, genai, stack.get("lang", "flask")
     )
@@ -63,7 +54,7 @@ def handleCodeGeneration(query):
         speak("Sorry, generation failed completely. Please try again.")
         return
 
-    # ── Inject guaranteed MongoDB connection into backend ─────────────────
+    # Inject guaranteed MongoDB connection into backend
     backend_file = stack["backend_file"]
     if backend_file in generated_files:
         generated_files[backend_file] = _inject_mongo_connection(
@@ -71,7 +62,7 @@ def handleCodeGeneration(query):
         )
         print(f"[CodeGen] MongoDB connection injected into {backend_file}")
 
-    # ── Build project data ────────────────────────────────────────────────
+    # Build project data
     project_data = {
         "project_name":    project_name,
         "description":     query,
@@ -83,7 +74,7 @@ def handleCodeGeneration(query):
         "notes":           f"MongoDB database: {project_name} | mongodb://localhost:27017/{project_name}"
     }
 
-    # ── Create project files ──────────────────────────────────────────────
+    # Create project files
     project_dir = os.path.join(save_dir, project_name)
     speak(f"Creating {len(generated_files)} files.")
     success = _create_project_files(project_dir, project_data)
@@ -94,7 +85,7 @@ def handleCodeGeneration(query):
 
     speak(f"Project created with {len(generated_files)} files.")
 
-    # ── Install dependencies ──────────────────────────────────────────────
+    # Install dependencies
     install_cmd = stack["install_command"]
     if install_cmd:
         speak("Installing dependencies.")
@@ -107,7 +98,7 @@ def handleCodeGeneration(query):
             print(f"[CodeGen] Install error: {e}")
             speak("Installation may need manual check.")
 
-    # ── Open in VS Code ───────────────────────────────────────────────────
+    # Open in VS Code
     speak("Open in VS Code?")
     if _yes(takecommand()):
         _open_in_vscode(project_dir)
@@ -115,7 +106,7 @@ def handleCodeGeneration(query):
     else:
         speak("No problem.")
 
-    # ── Run server ────────────────────────────────────────────────────────
+    # Run server
     run_cmd   = stack["run_command"]
     start_url = "http://localhost:5000"
 
@@ -130,12 +121,6 @@ def handleCodeGeneration(query):
     speak("Project is ready!")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  PARALLEL BATCHED GENERATION
-#  Uses a ThreadPoolExecutor with a small worker count that still respects
-#  Gemini's free-tier rate limits. Each worker retries with exponential
-#  backoff on failure.
-# ════════════════════════════════════════════════════════════════════════════
 def _strip_fences(content):
     content = re.sub(r'^```\w*\s*\n?', '', content)
     content = re.sub(r'\n?```\s*$',    '', content)
@@ -247,11 +232,9 @@ def _sequential_generate(file_specs, genai_mod):
     return results
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  INJECT GUARANTEED MONGODB CONNECTION
-#  Also removes any in-memory fake database lists Gemini generates
-#  (e.g. users = [...], rooms = [...]) that would overwrite db collections
-# ════════════════════════════════════════════════════════════════════════════
+
 def _inject_mongo_connection(code, lang, project_name):
     if lang == "flask":
         mongo_block = f"""
@@ -273,7 +256,7 @@ except Exception as e:
     print("[MongoDB] Make sure MongoDB is running: net start MongoDB")
 # ─────────────────────────────────────────────────────────────────────────
 """
-        # ── Remove existing connection code ───────────────────────────────
+        # Remove existing connection code
         code = re.sub(r'.*MongoClient.*\n',        '', code)
         code = re.sub(r'.*client\s*=\s*Mongo.*\n', '', code)
         code = re.sub(r'.*db\s*=\s*client\[.*\n',  '', code)
@@ -282,7 +265,7 @@ except Exception as e:
         code = re.sub(r'.*from pymongo.*\n',        '', code)
         code = re.sub(r'.*import bcrypt.*\n',       '', code)
 
-        # ── Remove in-memory fake database lists Gemini generates ─────────
+        # Remove in-memory fake database lists Gemini generates
         # These lists overwrite the real MongoDB collections if not removed
         # e.g. users = [...], rooms = [...], bookings = [...]
         code = re.sub(r'^users\s*=\s*\[.*?\]',    '', code, flags=re.DOTALL | re.MULTILINE)
@@ -311,7 +294,7 @@ except Exception as e:
         code = re.sub(r'def get_current_user\(\).*?(?=\ndef |\n@app)', '', code, flags=re.DOTALL)
         code = re.sub(r'def is_admin\(\).*?(?=\ndef |\n@app)', '', code, flags=re.DOTALL)
 
-        # ── Guaranteed login route ─────────────────────────────────────────
+        # Guaranteed login route
         login_fix = '''
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -330,7 +313,7 @@ def login():
         return redirect(url_for('login'))
     return render_template('login.html')
 '''
-        # ── Guaranteed signup route ────────────────────────────────────────
+        #  Guaranteed signup route
         signup_fix = '''
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
@@ -395,9 +378,9 @@ mongoose.connect(MONGO_URI + DB_NAME)
     return code
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  DETECT TECH STACK
-# ════════════════════════════════════════════════════════════════════════════
+
 def _detect_stack(query):
     q = query.lower()
     if "node" in q or "express" in q:
@@ -428,9 +411,8 @@ def _detect_stack(query):
         }
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  FILE SPECS — focused prompts per file
-# ════════════════════════════════════════════════════════════════════════════
+# FILE SPECS — focused prompts per file
+
 def _get_file_specs(query, stack, project_name):
     lang = stack["lang"]
 
@@ -622,9 +604,9 @@ Return ONLY JavaScript code, no markdown."""
     ] + config
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  EXTRACT PROJECT NAME
-# ════════════════════════════════════════════════════════════════════════════
+
 def _extract_project_name(query):
     match = re.search(
         r'(?:create|make|build|generate)\s+(?:a\s+|an\s+)?(.+?)(?:\s+in\s+|\s+using\s+|\s+with\s+|$)',
@@ -637,9 +619,9 @@ def _extract_project_name(query):
     return "my_project"
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  PARSE SAVE PATH FROM VOICE
-# ════════════════════════════════════════════════════════════════════════════
+
 def _parse_save_path(response):
     if not response:
         return os.path.join("D:\\", "Projects")
@@ -664,9 +646,9 @@ def _parse_save_path(response):
     return os.path.join("D:\\", "Projects")
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  CREATE ALL PROJECT FILES
-# ════════════════════════════════════════════════════════════════════════════
+
 def _create_project_files(project_dir, project_data):
     try:
         os.makedirs(project_dir, exist_ok=True)

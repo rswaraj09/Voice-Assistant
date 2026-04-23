@@ -1,15 +1,4 @@
-"""
-virtual_tryon.py — Real-time Virtual Try-On for Nora
-Compatible with mediapipe 0.10+ (Tasks API — no mp.solutions)
 
-Pipeline:
-  1. Screenshot current screen
-  2. Extract clothing item (rembg → GrabCut → simple crop fallback)
-  3. Open webcam
-  4. MediaPipe PoseLandmarker (Tasks API) → shoulder/hip landmarks
-  5. Alpha-blend cloth onto body in real time
-  6. Live window — C=Capture  R=Retry  Q=Quit
-"""
 
 import os
 import cv2
@@ -19,7 +8,7 @@ import numpy as np
 import pyautogui
 from datetime import datetime
 
-# ── Paths ─────────────────────────────────────────────────────────────────
+#  Paths 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.join(BASE_DIR, "..")
 TMP_DIR     = os.path.join(PROJECT_DIR, "cache", "tryon_tmp")
@@ -44,9 +33,7 @@ IDX = {
 }
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  MAIN ENTRY — called from command.py
-# ════════════════════════════════════════════════════════════════════════════
+#  MAIN ENTRY — called from command.py 
 def handleVirtualTryOn(query):
     from engine.command import speak, takecommand
 
@@ -76,9 +63,7 @@ def handleVirtualTryOn(query):
     _run_tryon(cloth_path)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  DOWNLOAD POSE MODEL
-# ════════════════════════════════════════════════════════════════════════════
+#  DOWNLOAD POSE MODEL 
 def _download_model():
     try:
         print(f"[TryOn] Downloading: {MODEL_URL}")
@@ -91,9 +76,8 @@ def _download_model():
         return False
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  SCREENSHOT
-# ════════════════════════════════════════════════════════════════════════════
+
 def _capture_screenshot():
     try:
         ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -106,9 +90,7 @@ def _capture_screenshot():
         return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  CLOTH EXTRACTION  (3-tier fallback)
-# ════════════════════════════════════════════════════════════════════════════
+#  CLOTH EXTRACTION  (3-tier fallback) 
 def _extract_clothing(screenshot_path):
     # Tier 1: rembg (best quality, needs pip install rembg)
     try:
@@ -286,9 +268,7 @@ def _extract_simple(screenshot_path):
         return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  LIVE TRY-ON — mediapipe 0.10+ Tasks API
-# ════════════════════════════════════════════════════════════════════════════
+#  LIVE TRY-ON — mediapipe 0.10+ Tasks API 
 class VoiceState:
     def __init__(self):
         self.command = None
@@ -447,9 +427,7 @@ def _run_tryon(cloth_path):
     print("[TryOn] Session ended.")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  OVERLAY + UI HELPERS
-# ════════════════════════════════════════════════════════════════════════════
+#  OVERLAY + UI HELPERS 
 def _overlay_cloth(frame, cloth_rgba, x, y, tw, th):
     if tw <= 0 or th <= 0:
         return frame

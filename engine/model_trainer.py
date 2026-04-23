@@ -1,16 +1,3 @@
-"""
-Model-trainer helpers for the ML project generator.
-
-Generates ready-to-run training / inference scripts for the most common
-frameworks. When a dataset is present the scripts will train and save a
-model; otherwise they act as clean starting points the user can adapt.
-
-Frameworks supported (detected/installed on demand):
-    * scikit-learn  — traditional ML, always available if sklearn is installed
-    * xgboost       — gradient boosting
-    * tensorflow / keras — deep learning, optional
-    * pytorch       — deep learning, optional
-"""
 
 import os
 import subprocess
@@ -253,7 +240,7 @@ def save_model(model, path, framework="sklearn"):
     raise ValueError(framework)
 
 
-# ── Eel exposures so the UI can trigger training ──────────────────────────
+# Eel exposures so the UI can trigger training 
 
 try:
     import eel

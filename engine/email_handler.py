@@ -17,7 +17,7 @@ GMAIL_COMPOSE_URL = "https://mail.google.com/mail/#compose"
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE    = 0.5
 
-# ── EXACT CALIBRATED COORDINATES (1920x1080) ─────────────────────────────────
+#   EXACT CALIBRATED COORDINATES (1920x1080)
 # Calibrated using calibrate_email.py on your actual Gmail compose window
 TO_X      = 1265
 TO_Y      = 454
@@ -32,9 +32,8 @@ SEND_X    = 1166
 SEND_Y    = 1037
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  HELPER: Paste text via clipboard
-# ════════════════════════════════════════════════════════════════════════════
+
 def type_text(text: str):
     pyperclip.copy(text)
     time.sleep(0.4)
@@ -42,9 +41,7 @@ def type_text(text: str):
     time.sleep(0.6)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  HELPER: Focus Chrome window
-# ════════════════════════════════════════════════════════════════════════════
+#   HELPER: Focus Chrome window
 def focus_chrome():
     time.sleep(0.5)
     try:
@@ -65,9 +62,8 @@ def focus_chrome():
     return False
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  HELPER: Expand the compose window (click the expand icon)
-# ════════════════════════════════════════════════════════════════════════════
+#   HELPER: Expand the compose window (click the expand icon)
+
 def expand_compose_window():
     """
     The compose window opens minimized as 'New Message' bar at bottom-right.
@@ -99,9 +95,8 @@ def expand_compose_window():
     speak("Compose window expanded.")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  STEP 1: Ask for email address
-# ════════════════════════════════════════════════════════════════════════════
+#   STEP 1: Ask for email address
+
 def ask_email_address() -> str:
     speak("What is the recipient's email address? Say it like: example at gmail dot com")
     for attempt in range(3):
@@ -131,9 +126,8 @@ def ask_email_address() -> str:
     return ""
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  STEP 2: Ask for subject
-# ════════════════════════════════════════════════════════════════════════════
+#   STEP 2: Ask for subject
+
 def ask_subject() -> str:
     speak("What is the subject of the email?")
     subject = takecommand()
@@ -144,9 +138,8 @@ def ask_subject() -> str:
     return subject.strip()
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  STEP 3: Generate email body using Gemini AI
-# ════════════════════════════════════════════════════════════════════════════
+#   STEP 3: Generate email body using Gemini AI
+
 def generate_email_body(subject: str) -> str:
     speak("Writing the email for you. One moment.")
     try:
@@ -171,9 +164,8 @@ Rules:
         return ""
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  STEP 4: Open Chrome on Gmail compose URL
-# ════════════════════════════════════════════════════════════════════════════
+#   STEP 4: Open Chrome on Gmail compose URL
+
 def open_chrome_gmail_compose():
     speak("Opening Gmail. Please wait and don't touch anything.")
     try:
@@ -201,9 +193,8 @@ def open_chrome_gmail_compose():
     time.sleep(1)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  STEP 5: Fill compose window
-# ════════════════════════════════════════════════════════════════════════════
+#   STEP 5: Fill compose window
+
 def fill_compose_window(recipient: str, subject: str, body: str) -> bool:
     try:
         speak("Filling in the email details.")
@@ -246,9 +237,8 @@ def fill_compose_window(recipient: str, subject: str, body: str) -> bool:
         return False
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  STEP 6: Confirm and Send
-# ════════════════════════════════════════════════════════════════════════════
+#   STEP 6: Confirm and Send
+
 def confirm_and_send(recipient: str, subject: str):
     speak(f"Email to {recipient} with subject {subject} is ready. Should I send it?")
     confirmation = takecommand()
@@ -268,9 +258,7 @@ def confirm_and_send(recipient: str, subject: str):
         speak("Okay, email cancelled. The compose window is still open.")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  MAIN FUNCTION
-# ════════════════════════════════════════════════════════════════════════════
+#   MAIN FUNCTION
 def handleEmail():
     recipient = ask_email_address()
     if not recipient:

@@ -15,18 +15,18 @@ import eel
 import threading
 
 
-# ── Global state ──────────────────────────────────────────────────────────
+#   Global state
 _interrupted = False
 _paused_text = ""
 _conversation_history = []
 MAX_HISTORY = 10
 
-# ── Voice config ──────────────────────────────────────────────────────────
+#   Voice config
 VOICE = "en-US-AvaNeural"
 RATE  = "+0%"
 PITCH = "+0Hz"
 
-# ── Paths ─────────────────────────────────────────────────────────────────
+#   Paths
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.join(BASE_DIR, "..")
 CACHE_DIR   = os.path.join(PROJECT_DIR, "cache", "tts_cache")
@@ -34,16 +34,14 @@ WIN_APP_CACHE = os.path.join(PROJECT_DIR, "cache", "win_app_cache.json")
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(os.path.join(PROJECT_DIR, "cache"), exist_ok=True)
 
-# ── Common environment paths ──────────────────────────────────────────────
+#   Common environment paths
 _LOCAL  = os.environ.get("LOCALAPPDATA", "")
 _ROAMING = os.environ.get("APPDATA", "")
 _PROG   = r"C:\Program Files"
 _PROG86 = r"C:\Program Files (x86)"
 
-# ════════════════════════════════════════════════════════════════════════════
-#  WIN APP MAP — name → full path or exe name
-#  Full paths are verified at runtime, exe names fall through to tier 3/4
-# ════════════════════════════════════════════════════════════════════════════
+#   WIN APP MAP — name → full path or exe name
+
 WIN_APP_MAP = {
     "notepad":              "notepad.exe",
     "calculator":           "calc.exe",
@@ -98,9 +96,8 @@ WIN_APP_MAP = {
 }
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  WINDOWS APP CACHE
-# ════════════════════════════════════════════════════════════════════════════
+#   WINDOWS APP CACHE
+
 def _load_win_cache():
     try:
         if os.path.exists(WIN_APP_CACHE):
@@ -126,9 +123,8 @@ def _cache_win_app(app_name, path_or_id):
     print(f"[WinCache] Saved: {app_name} → {path_or_id}")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  4-TIER APP FINDER
-# ════════════════════════════════════════════════════════════════════════════
+#   4-TIER APP FINDER
+
 def _find_win_app(app_name):
     """
     Tier 1: WIN_APP_MAP  — instant dict, verifies full path exists
@@ -139,7 +135,7 @@ def _find_win_app(app_name):
     """
     key = app_name.lower().strip()
 
-    # ── Tier 1: WIN_APP_MAP ───────────────────────────────────────────────
+    #   Tier 1: WIN_APP_MAP
     if key in WIN_APP_MAP:
         val = WIN_APP_MAP[key]
         if os.path.isabs(val):
@@ -163,7 +159,7 @@ def _find_win_app(app_name):
                 _cache_win_app(key, full)
                 return full, "exe"
 
-    # ── Tier 2: Cache file ────────────────────────────────────────────────
+    #   Tier 2: Cache file
     cache = _load_win_cache()
     if key in cache:
         cached = cache[key]
@@ -178,7 +174,7 @@ def _find_win_app(app_name):
             del cache[key]
             _save_win_cache(cache)
 
-    # ── Tier 3: Get-StartApps (Store + all registered apps) ───────────────
+    #   Tier 3: Get-StartApps (Store + all registered apps)
     try:
         result = subprocess.run(
             f'powershell -command "Get-StartApps | Where-Object {{$_.Name -like \'*{app_name}*\'}} | Select-Object -First 1 -ExpandProperty AppID"',
@@ -193,7 +189,7 @@ def _find_win_app(app_name):
     except:
         pass
 
-    # ── Tier 4: where command ─────────────────────────────────────────────
+    #   Tier 4: where command
     exe = app_name + ".exe"
     try:
         result = subprocess.run(
@@ -211,9 +207,8 @@ def _find_win_app(app_name):
     return None, None
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  OPEN WINDOWS APP
-# ════════════════════════════════════════════════════════════════════════════
+
 def openApp(app_name):
     app_name = app_name.strip()
     speak(f"Opening {app_name}.")
@@ -271,9 +266,7 @@ def _download_app(app_name):
         speak(f"I've opened the search results for {app_name}. Please click on the official website.")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  SPEAK
-# ════════════════════════════════════════════════════════════════════════════
+#   SPEAK
 async def _generate_audio(text):
     communicate = edge_tts.Communicate(text, voice=VOICE)
     audio_bytes = b""
@@ -405,9 +398,9 @@ def precache_common_phrases():
     threading.Thread(target=_cache, daemon=True).start()
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  TAKE COMMAND
-# ════════════════════════════════════════════════════════════════════════════
+
 def takecommand():
     r = sr.Recognizer()
     with sr.Microphone() as source:
@@ -499,9 +492,8 @@ def _is_file_share_request(query):
     return (has_action and has_target) or (has_action and has_file and has_target)
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  AI CONVERSATION
-# ════════════════════════════════════════════════════════════════════════════
 def chat_with_nora(query):
     global _conversation_history
     from engine.config import LLM_KEY
@@ -565,28 +557,26 @@ def clear_conversation():
     _conversation_history = []
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  PROCESS SINGLE QUERY
-# ════════════════════════════════════════════════════════════════════════════
+
 def process_query(query):
     if not query or query.strip() == "":
         return False
 
     try:
 
-        # ── MODE SYSTEM — checked early so "open X mode" isn't eaten by generic open handler
+        # MODE SYSTEM — checked early so "open X mode" isn't eaten by generic open handler
         if re.search(r'\bmodes?\b', query):
             from engine.modes import handle_mode_command
             if handle_mode_command(query):
                 return True
 
-        # ── NEWS — route before chat fallback
+        #  NEWS — route before chat fallback
         if re.search(r'\b(news|headlines|trending)\b', query):
             from engine.news_aggregator import handle_news_command
             if handle_news_command(query):
                 return True
 
-        # ── AVATAR
+        #   AVATAR
         if re.search(r'\bavatars?\b', query):
             from engine.avatar_generator import handle_avatar_command
             if handle_avatar_command(query):
@@ -633,7 +623,7 @@ def process_query(query):
                 openApp(app_name)
             return False
 
-        # ── PPT GENERATION ────────────────────────────────────────────────────
+        #  PPT GENERATION
         elif any(w in query for w in [
             "create a ppt", "make a ppt", "generate a ppt", "build a ppt",
             "create a presentation", "make a presentation", "generate presentation",
@@ -645,7 +635,7 @@ def process_query(query):
             handlePPTGeneration(query)
             return False
 
-        # ── IMAGE GENERATION ──────────────────────────────────────────────────────
+        #  IMAGE GENERATION
         elif re.search(
             r'\b(generate|create|draw|make|show)\b.{0,15}\b(image|picture|photo|wallpaper|illustration)\b'
             r'|'
@@ -666,7 +656,7 @@ def process_query(query):
             threading.Thread(target=handlePDFToExcel, args=(speak,), daemon=True).start()
             return True
 
-        # ── ML / AI PROJECT GENERATION ────────────────────────────────────────────────
+        #   ML / AI PROJECT GENERATION
         elif _is_ml_request(query):
             from engine.ml_project_generator import handleMLGeneration
             handleMLGeneration(query)
@@ -811,7 +801,7 @@ def process_query(query):
                         speak("Something went wrong with WhatsApp.")
             return False
 
-        # ── VIRTUAL TRY-ON ────────────────────────────────────────────────────
+        #  VIRTUAL TRY-ON
         elif any(w in query for w in [
             "try this cloth", "try on", "virtual try",
             "wear this", "try this outfit", "try this dress",
@@ -834,9 +824,7 @@ def process_query(query):
         return True
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  MAIN ENTRY POINT
-# ════════════════════════════════════════════════════════════════════════════
 @eel.expose
 def allCommands(message=1):
     precache_common_phrases()

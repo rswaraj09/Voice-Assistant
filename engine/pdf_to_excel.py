@@ -9,18 +9,16 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-# ── Output folder ─────────────────────────────────────────────────────────
+#  Output folder 
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "Documents", "JarvisExports")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ── Shared state for upload flow ──────────────────────────────────────────
+#  Shared state for upload flow 
 _pending_conversion = threading.Event()
 _uploaded_pdf_path  = [None]   # list so thread can mutate it
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  ANALYSE PDF — detect what's inside
-# ════════════════════════════════════════════════════════════════════════════
 def analyse_pdf(pdf_path: str) -> dict:
     info = {"pages": 0, "has_tables": False, "has_text": False,
             "table_count": 0, "text_pages": 0}
@@ -41,9 +39,7 @@ def analyse_pdf(pdf_path: str) -> dict:
     return info
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  STYLE HELPERS
-# ════════════════════════════════════════════════════════════════════════════
+#  STYLE HELPERS 
 _HEADER_FILL   = PatternFill("solid", start_color="1F4E79")
 _ALT_FILL      = PatternFill("solid", start_color="D6E4F0")
 _HEADER_FONT   = Font(name="Arial", bold=True, color="FFFFFF", size=11)
@@ -83,9 +79,7 @@ def _autofit_columns(sheet, min_w=10, max_w=50):
         sheet.column_dimensions[col_letter].width = min(max(max_len + 4, min_w), max_w)
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  WRITE TABLE TO SHEET
-# ════════════════════════════════════════════════════════════════════════════
 def _write_table(sheet, table: list, start_row: int = 1) -> int:
     """Writes a 2D list table to the sheet. Returns next available row."""
     if not table:
@@ -124,9 +118,7 @@ def _write_table(sheet, table: list, start_row: int = 1) -> int:
     return start_row + len(cleaned) + 2   # +2 gap before next table
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  WRITE RAW TEXT TO SHEET
-# ════════════════════════════════════════════════════════════════════════════
+#  WRITE RAW TEXT TO SHEET 
 def _write_text(sheet, text: str):
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     for row_idx, line in enumerate(lines, start=1):
@@ -147,9 +139,7 @@ def _write_text(sheet, text: str):
     _autofit_columns(sheet)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  MAIN CONVERTER
-# ════════════════════════════════════════════════════════════════════════════
+#  MAIN CONVERTER 
 def convert_pdf_to_excel(pdf_path: str, speak_fn) -> str | None:
     if not os.path.exists(pdf_path):
         speak_fn("I couldn't find the uploaded PDF. Please try again.")
@@ -173,7 +163,7 @@ def convert_pdf_to_excel(pdf_path: str, speak_fn) -> str | None:
             all_tables = []
             all_texts  = {}
 
-            # ── Pass 1: collect everything ────────────────────────────────
+            #  Pass 1: collect everything 
             for page_num, page in enumerate(pdf.pages, start=1):
                 tables = page.extract_tables()
                 text   = page.extract_text()
@@ -186,7 +176,7 @@ def convert_pdf_to_excel(pdf_path: str, speak_fn) -> str | None:
                 if text and text.strip():
                     all_texts[page_num] = text
 
-            # ── Pass 2: tables → individual sheets ────────────────────────
+            #  Pass 2: tables → individual sheets 
             if all_tables:
                 # Group tables: if many small tables, merge into one sheet per page
                 pages_with_tables = {}
@@ -201,7 +191,7 @@ def convert_pdf_to_excel(pdf_path: str, speak_fn) -> str | None:
                         current_row = _write_table(ws, tbl, start_row=current_row)
                     sheets_created += 1
 
-            # ── Pass 3: text-only pages → "Text Content" sheet ────────────
+            #  Pass 3: text-only pages → "Text Content" sheet 
             if all_texts:
                 # Pages that have text but no table
                 table_pages = {pn for pn, _ in all_tables}
@@ -235,7 +225,7 @@ def convert_pdf_to_excel(pdf_path: str, speak_fn) -> str | None:
                     _autofit_columns(ws_text)
                     sheets_created += 1
 
-            # ── Fallback: if nothing extracted, dump raw text ─────────────
+            #  Fallback: if nothing extracted, dump raw text 
             if sheets_created == 0 and all_texts:
                 ws = wb.create_sheet(title="Content")
                 _write_text(ws, "\n".join(all_texts.values()))
@@ -255,17 +245,13 @@ def convert_pdf_to_excel(pdf_path: str, speak_fn) -> str | None:
         return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  SIGNAL FROM UI — called by Eel when user uploads a file
-# ════════════════════════════════════════════════════════════════════════════
+#  SIGNAL FROM UI — called by Eel when user uploads a file 
 def set_uploaded_pdf(path: str):
     _uploaded_pdf_path[0] = path
     _pending_conversion.set()
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  MAIN HANDLER — called from command.py
-# ════════════════════════════════════════════════════════════════════════════
+#  MAIN HANDLER — called from command.py 
 def handlePDFToExcel(speak_fn):
     speak_fn("Sure! Please upload your PDF using the upload button that just appeared.")
 

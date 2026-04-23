@@ -21,7 +21,7 @@ import google.generativeai as genai
 
 HOTWORD_TRIGGER_FILE = "hotword_trigger.txt"
 
-# ── Thread-safe SQLite ────────────────────────────────────────────────────
+
 _local = threading.local()
 
 def get_cursor():
@@ -34,18 +34,16 @@ _main_con = sqlite3.connect("nora.db")
 _main_cursor = _main_con.cursor()
 
 
-# ════════════════════════════════════════════════════════════════════════════
+
 #  ASSISTANT SOUND
-# ════════════════════════════════════════════════════════════════════════════
+
 @eel.expose
 def playAssistantSound():
     music_dir = "templates\\assets\\audio\\start_sound.mp3"
     playsound(music_dir)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  CHECK HOTWORD — JS polls this as fallback
-# ════════════════════════════════════════════════════════════════════════════
+#  CHECK HOTWORD
 @eel.expose
 def checkHotword():
     if os.path.exists(HOTWORD_TRIGGER_FILE):
@@ -57,11 +55,8 @@ def checkHotword():
     return False
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  HOTWORD DETECTION — Process 2 ONLY
-#  Does ONE thing: writes trigger file when hotword detected
-#  Process 1 (trigger_watcher in main.py) handles everything else
-# ════════════════════════════════════════════════════════════════════════════
+#  HOTWORD DETECTION 
+
 def hotword():
     porcupine = None
     paud = None
@@ -98,9 +93,7 @@ def hotword():
         if paud is not None: paud.terminate()
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  OPEN COMMAND
-# ════════════════════════════════════════════════════════════════════════════
 def openCommand(query):
     query = query.replace(ASSISTANT_NAME, "")
     query = query.replace("open", "")
@@ -131,18 +124,14 @@ def openCommand(query):
             speak("something went wrong")
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  YOUTUBE
-# ════════════════════════════════════════════════════════════════════════════
 def PlayYoutube(query):
     search_term = extract_yt_term(query)
     speak("Playing " + search_term + " on YouTube")
     kit.playonyt(search_term)
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  FIND CONTACT
-# ════════════════════════════════════════════════════════════════════════════
 def findContact(query):
     match = re.search(r'to\s+([a-zA-Z\s]+?)(?:\s+on|\s*$)', query, re.IGNORECASE)
     if match:
@@ -168,9 +157,7 @@ def findContact(query):
         return 0, 0
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  WHATSAPP
-# ════════════════════════════════════════════════════════════════════════════
 def whatsApp(mobile_no, message, flag, name):
     from pipes import quote
     encoded_message = quote(message) if message else ""
@@ -192,18 +179,14 @@ def whatsApp(mobile_no, message, flag, name):
         speak("Message sent successfully to " + name)
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  MOBILE CALL (ADB)
-# ════════════════════════════════════════════════════════════════════════════
 def makeCall(name, mobileNo):
     mobileNo = mobileNo.replace(" ", "")
     speak("Calling " + name)
     os.system('adb shell am start -a android.intent.action.CALL -d tel:' + mobileNo)
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  SEND SMS (ADB)
-# ════════════════════════════════════════════════════════════════════════════
 def sendMessage(message, mobileNo, name):
     from engine.helper import replace_spaces_with_percent_s, goback, keyEvent, tapEvents, adbInput
     message = replace_spaces_with_percent_s(message)
@@ -222,9 +205,7 @@ def sendMessage(message, mobileNo, name):
     speak("message sent successfully to " + name)
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  GEMINI AI
-# ════════════════════════════════════════════════════════════════════════════
 def geminai(query):
     try:
         query = query.replace(ASSISTANT_NAME, "")
@@ -238,9 +219,8 @@ def geminai(query):
         print("Error:", e)
 
 
-# ════════════════════════════════════════════════════════════════════════════
 #  EEL EXPOSED — UI FUNCTIONS
-# ════════════════════════════════════════════════════════════════════════════
+
 @eel.expose
 def assistantName():
     return ASSISTANT_NAME

@@ -4,10 +4,7 @@ import time
 
 IP_FILE = "engine/device_ip.txt"
 
-
-# ════════════════════════════════════════════════════════════════════════════
 #  HELPER: Get device IP
-# ════════════════════════════════════════════════════════════════════════════
 def get_device_ip():
     """Read saved device IP from file."""
     try:

@@ -24,7 +24,7 @@ def handlePPTGeneration(query):
     genai.configure(api_key=LLM_KEY)
     model = genai.GenerativeModel("gemini-2.5-flash")
 
-    # ── Step 1: Generate outline ──────────────────────────────────────────
+    #  Step 1: Generate outline 
     speak("Generating the outline. One moment.")
     outline = _generate_outline(model, topic)
 
@@ -39,7 +39,7 @@ def handlePPTGeneration(query):
     if len(outline) > 5:
         speak(f"And {len(outline) - 5} more slides.")
 
-    # ── Step 2: Ask for changes ───────────────────────────────────────────
+    #  Step 2: Ask for changes 
     speak("Would you like any changes to this outline? Say yes with your changes or no to proceed.")
     response = takecommand()
 
@@ -50,12 +50,12 @@ def handlePPTGeneration(query):
     else:
         speak("Great. Starting generation now.")
 
-    # ── Step 3: Ask where to save ─────────────────────────────────────────
+    #  Step 3: Ask where to save 
     speak("Where would you like to save the presentation?")
     save_response = takecommand()
     save_dir = _parse_save_path(save_response)
 
-    # ── Step 4: Generate full slide content ───────────────────────────────
+    #  Step 4: Generate full slide content 
     speak("Generating all slide content. This will take a moment.")
     slides_data = _generate_slides_content(model, topic, outline)
 
@@ -63,7 +63,7 @@ def handlePPTGeneration(query):
         speak("Sorry, content generation failed. Please try again.")
         return
 
-    # ── Step 5: Generate the PPTX file ───────────────────────────────────
+    #  Step 5: Generate the PPTX file 
     speak("Building the presentation with professional design.")
     safe_name = re.sub(r'[^a-z0-9_]', '_', topic.lower())[:40]
     filename   = f"{safe_name}.pptx"
@@ -78,7 +78,7 @@ def handlePPTGeneration(query):
 
     speak(f"Presentation created with {len(slides_data)} slides. Saved to {save_dir}.")
 
-    # ── Step 6: Ask to present ────────────────────────────────────────────
+    #  Step 6: Ask to present 
     speak("Would you like me to open and present it now?")
     present_response = takecommand()
 
@@ -90,9 +90,7 @@ def handlePPTGeneration(query):
         speak(f"Your presentation is ready at {output_path}.")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  GENERATE OUTLINE
-# ════════════════════════════════════════════════════════════════════════════
+#  GENERATE OUTLINE 
 def _generate_outline(model, topic):
     prompt = f"""Create a professional presentation outline on "{topic}".
 
@@ -121,9 +119,7 @@ Make titles concise and impactful. Key points should be short phrases, not sente
         return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  APPLY CHANGES TO OUTLINE
-# ════════════════════════════════════════════════════════════════════════════
+#  APPLY CHANGES TO OUTLINE 
 def _apply_changes(model, topic, outline, changes):
     prompt = f"""Update this presentation outline on "{topic}" based on these changes: "{changes}"
 
@@ -142,9 +138,7 @@ Return ONLY the updated JSON array, no markdown, no explanation."""
         return outline  # Return original if update fails
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  GENERATE FULL SLIDE CONTENT
-# ════════════════════════════════════════════════════════════════════════════
+#  GENERATE FULL SLIDE CONTENT 
 def _generate_slides_content(model, topic, outline):
     prompt = f"""Generate complete slide content for a professional presentation on "{topic}".
 
@@ -237,9 +231,7 @@ Return ONLY the JSON array."""
         return None
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  BUILD PPTX USING NODE.JS + PPTXGENJS
-# ════════════════════════════════════════════════════════════════════════════
+#  BUILD PPTX USING NODE.JS + PPTXGENJS 
 def _build_pptx(slides_data, topic, output_path):
     # Write slides data to temp JSON
     data_file   = os.path.join(SCRIPT_DIR, "slides_data.json")
@@ -271,9 +263,7 @@ def _build_pptx(slides_data, topic, output_path):
         return False
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  PPTXGENJS SCRIPT — professional design with animations
-# ════════════════════════════════════════════════════════════════════════════
+#  PPTXGENJS SCRIPT — professional design with animations 
 def _get_pptxgenjs_script():
     return r"""
 const pptxgen = require("pptxgenjs");

@@ -1,13 +1,4 @@
-"""
-Avatar generator — 2D avatar creation and management.
 
-Uses the public DiceBear API for parametric avatars (no API key required).
-Styles: adventurer, avataaars, big-ears, bottts, fun-emoji, lorelei, micah,
-miniavs, notionists, personas, pixel-art, thumbs.
-
-Generated avatars are saved as SVG to templates/assets/avatars/ so the
-frontend can display them directly.
-"""
 
 import json
 import os
@@ -34,7 +25,7 @@ AVAILABLE_STYLES = [
 ]
 
 
-# ── Schema ─────────────────────────────────────────────────────────────────
+# Schema
 
 def _get_connection():
     con = sqlite3.connect(DB_PATH)
@@ -62,7 +53,7 @@ def init_avatar_tables():
         con.close()
 
 
-# ── Generation ─────────────────────────────────────────────────────────────
+# Generation
 
 def _fetch_dicebear_svg(style, seed):
     url = f"https://api.dicebear.com/7.x/{style}/svg?seed={quote_plus(seed)}"
@@ -166,7 +157,7 @@ def generate_avatar_from_description(name, description):
     return generate_avatar_from_parameters(name, style=style, seed=seed, description=description)
 
 
-# ── CRUD ───────────────────────────────────────────────────────────────────
+# CRUD
 
 def list_avatars():
     with _db_lock:
@@ -227,7 +218,7 @@ def delete_avatar(avatar_id):
         con.close()
 
 
-# ── Voice commands ─────────────────────────────────────────────────────────
+# Voice commands
 
 _CREATE_AVATAR_RE = re.compile(r"\b(?:create|make|generate)\s+(?:a\s+|an\s+)?avatar(?:\s+(?:named|called)\s+(\S+))?", re.IGNORECASE)
 _LIST_AVATAR_RE   = re.compile(r"\b(?:list|show)\s+(?:my\s+|all\s+)?avatars?\b", re.IGNORECASE)
@@ -301,7 +292,7 @@ def handle_avatar_command(query):
     return False
 
 
-# ── Eel ────────────────────────────────────────────────────────────────────
+#  Eel
 
 @eel.expose
 def uiListAvatars():

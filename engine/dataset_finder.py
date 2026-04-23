@@ -1,14 +1,4 @@
-"""
-Dataset discovery helpers used by the ML pipeline.
 
-Sources:
-    * Kaggle — via the kaggle CLI if credentials (~/.kaggle/kaggle.json) exist.
-    * Hugging Face Datasets — via the huggingface_hub package if installed.
-    * Curated fallback — a small catalogue of classic public datasets so the
-      feature has sensible results even without network or keys.
-
-All heavy imports are done lazily so the module stays import-safe.
-"""
 
 import json
 import os

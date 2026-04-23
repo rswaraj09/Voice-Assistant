@@ -1,13 +1,4 @@
-"""
-Mode System — user-defined voice-activated modes that group apps and links.
 
-Users can say:
-    "jarvis open coding mode"     → activates the 'coding' mode
-    "create coding mode"          → creates a new empty mode
-    "add vs code to coding mode"  → adds an app item
-    "list modes"                  → speaks all known modes
-    "delete coding mode"          → removes a mode
-"""
 
 import json
 import os
@@ -69,7 +60,7 @@ def _normalize(name):
     return (name or "").strip().lower()
 
 
-# ── Core CRUD ──────────────────────────────────────────────────────────────
+#  Core CRUD 
 
 def create_mode(mode_name, description=""):
     name = _normalize(mode_name)
@@ -301,7 +292,7 @@ def deactivate_mode():
         pass
 
 
-# ── Voice-command text parsing ─────────────────────────────────────────────
+#  Voice-command text parsing 
 
 _OPEN_MODE_RE     = re.compile(r"\b(?:open|activate|start|launch)\s+(.+?)\s+mode\b", re.IGNORECASE)
 _CREATE_MODE_RE   = re.compile(r"\bcreate\s+(?:a\s+|new\s+)?(?:mode\s+(?:called\s+|named\s+)?(.+)|(.+?)\s+mode)\b", re.IGNORECASE)
@@ -375,7 +366,7 @@ def handle_mode_command(query):
     return False
 
 
-# ── Eel-exposed UI helpers ─────────────────────────────────────────────────
+#  Eel-exposed UI helpers 
 
 @eel.expose
 def uiListModes():

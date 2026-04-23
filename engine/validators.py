@@ -15,7 +15,7 @@ import os
 import re
 
 
-# ── File-level validation ──────────────────────────────────────────────────
+#  File-level validation  
 
 def validate_python_syntax(path, content):
     issues = []
@@ -72,7 +72,7 @@ def validate_generated_file(path, content):
     return {"ok": True, "issues": [], "info": {"skipped": True}}
 
 
-# ── Project-level completeness ─────────────────────────────────────────────
+#  Project-level completeness 
 
 CRITICAL_BY_KIND = {
     "flask": [
