@@ -268,14 +268,31 @@ def _download_app(app_name):
 
 #   SPEAK
 async def _generate_audio(text):
-    communicate = edge_tts.Communicate(text, voice=VOICE)
-    audio_bytes = b""
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            audio_bytes += chunk["data"]
-        if _interrupted:
-            break
-    return audio_bytes
+    # Try different voices if one fails (helps bypass some 403 blocks)
+    voices = [VOICE, "en-US-GuyNeural", "en-US-AriaNeural", "en-GB-SoniaNeural"]
+    last_err = None
+    
+    for v in voices:
+        try:
+            communicate = edge_tts.Communicate(text, voice=v)
+            audio_bytes = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_bytes += chunk["data"]
+                if _interrupted:
+                    break
+            if audio_bytes:
+                return audio_bytes
+        except Exception as e:
+            last_err = e
+            if "403" in str(e):
+                print(f"[speak] Voice {v} blocked (403), trying next...")
+                continue
+            break # other errors skip retry
+            
+    if last_err:
+        raise last_err
+    return None
 
 
 def _get_cache_path(text):
@@ -331,20 +348,22 @@ def speak(text, use_cache=True):
             _play_audio_bytes(audio_bytes)
 
     except Exception as e:
-        print(f"[speak] Edge TTS error: {e} — falling back to pyttsx3")
+        print(f"[speak] Edge TTS error: {e} — falling back to SAPI5")
         try:
-            # Run pyttsx3 in a separate process/thread to avoid loop errors
-            def _fallback():
+            # Use SAPI.SpVoice directly for better quality than basic pyttsx3
+            import win32com.client
+            def _sapi_fallback():
                 try:
-                    engine = pyttsx3.init('sapi5')
-                    voices = engine.getProperty('voices')
-                    engine.setProperty('voice', voices[1].id if len(voices) > 1 else voices[0].id)
-                    engine.setProperty('rate', 185)
+                    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                    # Try to find a better voice (like David or Zira)
+                    speaker.Speak(text)
+                except:
+                    # Final fallback to basic pyttsx3 if SAPI fails
+                    import pyttsx3
+                    engine = pyttsx3.init()
                     engine.say(text)
                     engine.runAndWait()
-                except:
-                    pass
-            threading.Thread(target=_fallback).start()
+            threading.Thread(target=_sapi_fallback).start()
         except Exception as e2:
             print(f"[speak] Fallback error: {e2}")
     finally:
@@ -485,18 +504,20 @@ def _is_ml_request(query):
 
 
 def _is_file_share_request(query):
+    query = query.lower()
     has_action = any(w in query for w in [
-        "convert", "share", "send", "forward", "upload", "attach"
+        "convert", "share", "send", "forward", "upload", "attach", "give"
     ])
     has_target = any(w in query for w in [
         "whatsapp", "telegram", "email", "gmail", "google drive",
-        "drive", "bluetooth", "slack", "discord"
+        "drive", "bluetooth", "slack", "discord", "mail"
     ])
+    # Also trigger if user says "share this file" without platform (we'll ask)
     has_file = any(w in query for w in [
         "excel", "spreadsheet", "pdf", "word", "document",
-        "file", "sheet", "ppt", "presentation", "image", "photo"
+        "file", "sheet", "ppt", "presentation", "image", "photo", "this"
     ])
-    return (has_action and has_target) or (has_action and has_file and has_target)
+    return (has_action and (has_target or has_file))
 
 
 
@@ -685,12 +706,7 @@ def process_query(query):
             handleMLGeneration(query)
             return True
 
-        elif re.search(
-            r'\b(convert|send|share|forward|upload)\b.{0,30}'
-            r'\b(excel|xlsx|pdf|spreadsheet|file|document)\b.{0,30}'
-            r'\b(whatsapp|drive|email|mail|gmail|telegram|send|share)\b',
-            query, re.IGNORECASE
-        ):
+        elif _is_file_share_request(query):
             from engine.file_share import handleFileShareCommand
             threading.Thread(
                 target=handleFileShareCommand,
