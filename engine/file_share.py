@@ -44,11 +44,7 @@ def _get_gemini_model():
 
     try:
         genai.configure(api_key=LLM_KEY)
-<<<<<<< HEAD
-        return genai.GenerativeModel("gemini-2.0-flash-exp")
-=======
         return genai.GenerativeModel("gemini-2.5-flash")
->>>>>>> 6f1bc1e86de5d78524b6d57f34334cff51205d68
     except Exception as e:
         print(f"[FileShare] Gemini init error: {e}")
         return None
@@ -83,28 +79,6 @@ def gemini_detect_open_file_on_screen(speak_fn=None) -> str | None:
         screenshot.save(buf, format="PNG")
         img_b64 = base64.b64encode(buf.getvalue()).decode()
 
-<<<<<<< HEAD
-        prompt = """Look at this screenshot carefully.
-
-Your task: identify the NAME of the file/document that is currently OPEN and
-in the FOREGROUND (i.e., the active/focused window the user is working on).
-
-Look for clues in:
-- The title bar of the foreground window (e.g. "Sales_Report.xlsx - Microsoft Excel")
-- Browser tabs (e.g. a PDF open in Chrome)
-- The document header/watermark
-- Any visible filename near the top of the active window
-
-Return ONLY a JSON object — no markdown, no explanation:
-{
-  "filename": "exact filename with extension as shown on screen",
-  "confidence": 0.95,
-  "app": "application name, e.g. Microsoft Excel / Adobe Acrobat / Word"
-}
-
-If you cannot identify any open file with reasonable confidence, return:
-{"filename": null, "confidence": 0, "app": null}"""
-=======
         # Get window titles for additional context
         window_titles = [w.title for w in gw.getAllWindows() if w.visible and w.title]
         titles_context = "\n".join(window_titles)
@@ -127,7 +101,6 @@ Return ONLY a JSON object:
 }}
 
 If nothing is identified, return filename: null."""
->>>>>>> 6f1bc1e86de5d78524b6d57f34334cff51205d68
 
         response = model.generate_content([
             {"mime_type": "image/png", "data": img_b64},
@@ -169,9 +142,6 @@ _SEARCH_DIRS = [
     os.path.join(os.environ.get("USERPROFILE", ""), "OneDrive"),
     os.path.join(os.environ.get("USERPROFILE", ""), "OneDrive", "Documents"),
     os.path.join(os.environ.get("USERPROFILE", ""), "OneDrive", "Desktop"),
-<<<<<<< HEAD
-]
-=======
     # Cache and Temp locations (where opened email attachments live)
     os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "INetCache"),
     os.path.join(os.environ.get("LOCALAPPDATA", ""), "Temp"),
@@ -194,7 +164,6 @@ def _get_open_explorer_paths() -> list:
             except: continue
     except: pass
     return list(set(paths))
->>>>>>> 6f1bc1e86de5d78524b6d57f34334cff51205d68
 
 
 def find_file_smart(filename: str, speak_fn=None) -> str | None:
@@ -211,52 +180,6 @@ def find_file_smart(filename: str, speak_fn=None) -> str | None:
     if not filename_lower:
         return None
 
-<<<<<<< HEAD
-    # 1. Quick check: is the active file this one?
-    active = get_active_file_path()
-    if active and os.path.basename(active).lower() == filename_lower:
-        print(f"[FileShare] Active file matches query: {active}")
-        return active
-
-    search_dirs = [os.getcwd()] + [d for d in _SEARCH_DIRS if os.path.isdir(d)]
-
-    # 2. Exact-name match
-    for base in search_dirs:
-        for root, _dirs, files in os.walk(base):
-            for f in files:
-                if f.lower() == filename_lower:
-                    full = os.path.join(root, f)
-                    print(f"[FileShare] Exact match: {full}")
-                    return full
-
-    # 3. Partial-name match (filename_lower is a substring)
-    for base in search_dirs:
-        for root, _dirs, files in os.walk(base):
-            for f in files:
-                if filename_lower in f.lower():
-                    full = os.path.join(root, f)
-                    print(f"[FileShare] Partial match: {full}")
-                    return full
-
-    # 4. PowerShell search (uses Windows Search index)
-    try:
-        ps = (
-            f'Get-ChildItem -Path $env:USERPROFILE -Recurse '
-            f'-Filter "*{filename}*" -ErrorAction SilentlyContinue '
-            f'| Select-Object -First 1 -ExpandProperty FullName'
-        )
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps],
-            capture_output=True, text=True, timeout=15,
-        )
-        found = result.stdout.strip()
-        if result.returncode == 0 and found and os.path.exists(found):
-            print(f"[FileShare] PowerShell found: {found}")
-            return found
-    except Exception as e:
-        print(f"[FileShare] PowerShell search failed: {e}")
-
-=======
     # 1. Check Windows 'Recent' items (Excellent for "this file")
     try:
         import winshell
@@ -343,7 +266,6 @@ def find_file_smart(filename: str, speak_fn=None) -> str | None:
     except Exception as e:
         print(f"[FileShare] PowerShell search failed: {e}")
 
->>>>>>> 6f1bc1e86de5d78524b6d57f34334cff51205d68
     print(f"[FileShare] Could not find: {filename}")
     return None
 
@@ -646,33 +568,17 @@ def _focus_whatsapp():
 
 def send_whatsapp_file(contact_name: str, file_path: str, speak_fn) -> bool:
     """
-<<<<<<< HEAD
-    Opens WhatsApp Desktop → searches contact → attaches file via the
-    native file-picker dialog (opened with Ctrl+Shift+A or the clip icon)
-    → sends.
-=======
     Opens WhatsApp Desktop → searches contact → copies ACTUAL FILE to clipboard 
     → pastes into chat → sends.
->>>>>>> 6f1bc1e86de5d78524b6d57f34334cff51205d68
     """
     import pyperclip
+    import subprocess
 
     file_path = os.path.abspath(file_path)
     if not os.path.exists(file_path):
         speak_fn("The file doesn't exist. Cannot send.")
         return False
 
-<<<<<<< HEAD
-    speak_fn(f"Opening WhatsApp and searching for {contact_name}.")
-
-    # ── Step 1: Open WhatsApp ──────────────────────────────────────────────
-    _open_whatsapp_desktop()
-    time.sleep(3)
-
-    wa = _focus_whatsapp()
-    if not wa:
-        speak_fn("Could not open WhatsApp Desktop. Is it installed?")
-=======
     speak_fn(f"Sending {os.path.basename(file_path)} to {contact_name} on WhatsApp.")
 
     # ── Step 1: Open WhatsApp ──────────────────────────────────────────────
@@ -682,60 +588,11 @@ def send_whatsapp_file(contact_name: str, file_path: str, speak_fn) -> bool:
     wa = _focus_whatsapp()
     if not wa:
         speak_fn("Could not open WhatsApp Desktop.")
->>>>>>> 6f1bc1e86de5d78524b6d57f34334cff51205d68
         return False
 
     # ── Step 2: Search for contact ─────────────────────────────────────────
     print(f"[FileShare] Searching contact: {contact_name}")
     pyautogui.hotkey("ctrl", "f")
-<<<<<<< HEAD
-    time.sleep(1.0)
-    pyautogui.hotkey("ctrl", "a")
-    time.sleep(0.2)
-    pyperclip.copy(contact_name)
-    pyautogui.hotkey("ctrl", "v")
-    time.sleep(2.5)      # let search results populate
-    pyautogui.press("enter")
-    time.sleep(2.0)      # let chat open
-
-    # ── Step 3: Open attach dialog (Ctrl+Shift+A is WhatsApp's shortcut) ──
-    print("[FileShare] Opening attachment dialog...")
-    _focus_whatsapp()
-    pyautogui.hotkey("ctrl", "shift", "a")
-    time.sleep(2.0)
-
-    # If the native file picker didn't open, try clicking the paperclip
-    # (visual coordinates are approximate — works best maximised)
-    # As a fallback we just type the path into the Windows open-file dialog
-    # which has an address bar we can reach with Ctrl+L.
-
-    # ── Step 4: Type file path into the Windows Open dialog ───────────────
-    # The Windows open-file dialog's address bar is accessible via Ctrl+L
-    # (same as Explorer). We send the full absolute path and press Enter.
-    print(f"[FileShare] Typing file path: {file_path}")
-    time.sleep(0.5)
-
-    # Try to focus the filename box directly first (works on most dialogs)
-    pyperclip.copy(file_path)
-
-    # Navigate the filename field
-    pyautogui.hotkey("ctrl", "l")          # focus address/file bar
-    time.sleep(0.4)
-    pyautogui.hotkey("ctrl", "a")
-    time.sleep(0.2)
-    pyautogui.hotkey("ctrl", "v")          # paste full path
-    time.sleep(0.3)
-    pyautogui.press("enter")               # confirm selection
-    time.sleep(2.5)                        # wait for attachment preview
-
-    # ── Step 5: Send ──────────────────────────────────────────────────────
-    print("[FileShare] Sending...")
-    _focus_whatsapp()
-    pyautogui.press("enter")
-    time.sleep(3)
-
-    speak_fn(f"File sent to {contact_name} on WhatsApp!")
-=======
     time.sleep(0.5)
     pyautogui.hotkey("ctrl", "a")
     pyautogui.press("backspace")
@@ -769,7 +626,6 @@ def send_whatsapp_file(contact_name: str, file_path: str, speak_fn) -> bool:
     time.sleep(2)
 
     speak_fn(f"File sent to {contact_name} successfully!")
->>>>>>> 6f1bc1e86de5d78524b6d57f34334cff51205d68
     print(f"[FileShare] ✓ Sent '{os.path.basename(file_path)}' to {contact_name}")
     return True
 
@@ -986,25 +842,6 @@ def handleFileShareCommand(query: str, speak_fn, takecommand_fn):
         if pdf:
             file_path = pdf
             speak_fn("Conversion done.")
-<<<<<<< HEAD
-        else:
-            return   # error already spoken inside convert_excel_to_pdf
-
-    print(f"[FileShare] Final file: {file_path}")
-    speak_fn(f"Got it — {os.path.basename(file_path)}.")
-
-    # ── 3. Confirm platform if still unknown ──────────────────────────────
-    if not dest["platform"]:
-        speak_fn("Where should I send it? Say WhatsApp, Google Drive, or Email.")
-        ans = (takecommand_fn() or "").lower()
-        if "whatsapp" in ans:
-            dest["platform"] = "whatsapp"
-        elif "drive" in ans:
-            dest["platform"] = "drive"
-        elif "email" in ans or "mail" in ans:
-            dest["platform"] = "email"
-=======
->>>>>>> 6f1bc1e86de5d78524b6d57f34334cff51205d68
         else:
             return   # error already spoken inside convert_excel_to_pdf
 
@@ -1038,15 +875,6 @@ def handleFileShareCommand(query: str, speak_fn, takecommand_fn):
             speak_fn("No contact name given. Cancelling.")
             return
 
-<<<<<<< HEAD
-    # ── 4. Get contact name if needed ──────────────────────────────────────
-    if dest["platform"] in ("whatsapp", "email") and not dest["contact"]:
-        speak_fn("Who should I send it to?")
-        dest["contact"] = (takecommand_fn() or "").strip()
-        if not dest["contact"]:
-            speak_fn("No contact name given. Cancelling.")
-            return
-
     # ── 5. Execute (in a daemon thread so Jarvis stays responsive) ────────
     def _run():
         if dest["platform"] == "whatsapp":
@@ -1065,23 +893,3 @@ def handleFileShareCommand(query: str, speak_fn, takecommand_fn):
     t.start()
     # Give the thread a moment to start before returning control
     time.sleep(0.3)
-=======
-    # ── 5. Execute (in a daemon thread so Jarvis stays responsive) ────────
-    def _run():
-        if dest["platform"] == "whatsapp":
-            send_whatsapp_file(dest["contact"], file_path, speak_fn)
-
-        elif dest["platform"] == "drive":
-            upload_to_google_drive(file_path, speak_fn)
-
-        elif dest["platform"] == "email":
-            send_file_via_email(dest["contact"], file_path, speak_fn)
-
-        else:
-            speak_fn("I don't support that platform yet.")
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    # Give the thread a moment to start before returning control
-    time.sleep(0.3)
->>>>>>> 6f1bc1e86de5d78524b6d57f34334cff51205d68
