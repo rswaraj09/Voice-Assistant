@@ -563,6 +563,11 @@ def process_query(query):
         return False
 
     try:
+        #  SPECIAL NOTES MODE — handled before general modes
+        if re.search(r'\b(start|enter|activate|open)\s+notes?\s+mode\b', query.lower()):
+            from engine.notes_mode import handleNotesMode
+            handleNotesMode()
+            return True
 
         # MODE SYSTEM — checked early so "open X mode" isn't eaten by generic open handler
         if re.search(r'\bmodes?\b', query):
