@@ -575,6 +575,11 @@ def process_query(query):
             if handle_mode_command(query):
                 return True
 
+        # REMINDERS / SCHEDULER
+        from engine.reminder_handler import handle_reminder_command
+        if handle_reminder_command(query):
+            return True
+
         #  NEWS — route before chat fallback
         if re.search(r'\b(news|headlines|trending)\b', query):
             from engine.news_aggregator import handle_news_command

@@ -29,7 +29,7 @@ def start():
         eel.hideStart()
         playAssistantSound()
         speak("Hello, Welcome Sir, How can I Help You")
-
+        
     # ── TRIGGER FILE WATCHER — runs in Process 1 ─────────────────────────
     def trigger_watcher():
         import pygetwindow as gw
