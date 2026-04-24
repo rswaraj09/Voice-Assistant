@@ -44,6 +44,10 @@ def handleMLGeneration(query):
     #  Where to save 
     speak("Where would you like to save this project?")
     save_path_response = takecommand()
+    if save_path_response and any(w in save_path_response.lower() for w in ["exit", "stop", "cancel", "quit"]):
+        speak("ML project generation cancelled.")
+        return
+        
     save_dir     = _parse_save_path(save_path_response)
     project_name = _extract_project_name(query)
     project_dir  = os.path.join(save_dir, project_name)
@@ -120,13 +124,21 @@ def handleMLGeneration(query):
     #  Open in VS Code 
     speak("Open the project in VS Code?")
     from engine.command import takecommand as tc
-    if _yes(tc()):
+    resp = tc()
+    if resp and any(w in resp.lower() for w in ["exit", "stop", "cancel", "quit"]):
+        speak("Process stopped. Your files are in " + project_dir)
+        return
+    if _yes(resp):
         _open_in_vscode(project_dir)
         speak("Opened in VS Code.")
 
     #  Train the model 
     speak("Should I run the model training now?")
-    if _yes(tc()):
+    resp = tc()
+    if resp and any(w in resp.lower() for w in ["exit", "stop", "cancel", "quit"]):
+        speak("Process stopped. Your files are in " + project_dir)
+        return
+    if _yes(resp):
         speak("Starting model training. I'll let you know when it's done.")
         success = _run_training(project_dir)
         if success:
@@ -138,7 +150,11 @@ def handleMLGeneration(query):
 
     #  Launch prediction web app 
     speak("Should I start the prediction web app?")
-    if _yes(tc()):
+    resp = tc()
+    if resp and any(w in resp.lower() for w in ["exit", "stop", "cancel", "quit"]):
+        speak("Process stopped. Your files are in " + project_dir)
+        return
+    if _yes(resp):
         speak("Starting the prediction app at http://localhost:5000")
         _run_server("python app.py", project_dir, "http://localhost:5000")
     else:

@@ -321,6 +321,8 @@
                                         class="bi bi-chat-dots"></i></button>
                                 <button id="SettingsBtn" data-bs-toggle="modal" data-bs-target="#exampleModal"
                                     class="glow-on-hover"><i class="bi bi-gear"></i></button>
+                                <button id="StudyBtn" onclick="eel.allCommands('start study mode')()"
+                                    class="glow-on-hover" title="Study Mode"><i class="bi bi-mortarboard"></i></button>
 
                             </div>
                         </div>
@@ -395,6 +397,9 @@
                             <button class="nav-link" id="nav-avatars-tab" data-bs-toggle="tab"
                                 data-bs-target="#nav-avatars" type="button" role="tab" aria-controls="nav-avatars"
                                 aria-selected="false">Avatars</button>
+                            <button class="nav-link" id="nav-study-tab" data-bs-toggle="tab"
+                                data-bs-target="#nav-study" type="button" role="tab" aria-controls="nav-study"
+                                aria-selected="false">Study</button>
                         </div>
                     </nav>
                     <div class="tab-content" id="nav-tabContent">
@@ -782,6 +787,34 @@
                                 </div>
                                 <div id="AvatarsList" class="mt-3"
                                      style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:12px;"></div>
+                            </div>
+                        </div>
+
+                        <!-- Tab-7: Study Mode -->
+                        <div class="tab-pane fade" id="nav-study" role="tabpanel" aria-labelledby="nav-study-tab" tabindex="0">
+                            <div class="p-3">
+                                <p>Enhance your learning with <strong>Study Mode</strong>. Upload multiple PDFs and interact with them using your voice.</p>
+                                <div class="row mt-4">
+                                    <div class="col-md-6">
+                                        <div class="study-feature-card p-3 mb-3" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(0,170,255,0.2); border-radius: 12px; transition: 0.3s;">
+                                            <i class="bi bi-file-earmark-pdf fs-3 text-info"></i>
+                                            <h5 class="text-light mt-2">Smart Analysis</h5>
+                                            <p class="text-light opacity-75 small">Nora reads through all your PDFs and understands the context for you.</p>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="study-feature-card p-3 mb-3" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(0,170,255,0.2); border-radius: 12px; transition: 0.3s;">
+                                            <i class="bi bi-graph-up-arrow fs-3 text-success"></i>
+                                            <h5 class="text-light mt-2">Visual Learning</h5>
+                                            <p class="text-light opacity-75 small">Ask Nora to generate flowcharts or infographics based on your material.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="text-center mt-4">
+                                    <button class="btn btn-glow px-5 py-2" onclick="eel.allCommands('start study mode')()">
+                                        <i class="bi bi-mortarboard-fill me-2"></i> Start Study Mode
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>

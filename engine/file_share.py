@@ -1,681 +1,588 @@
+"""
+file_share.py  — Jarvis File Sharing Module (Fixed & Improved)
+
+Flow when user says "share this file to Didi on WhatsApp":
+  1. detect_share_destination()  → platform="whatsapp", contact="Didi"
+  2. If user named a file  → find_file_smart()
+  3. Else → get_active_file_path() (COM / psutil)
+  4. Else → gemini_detect_open_file_on_screen()  ← VISION FALLBACK
+  5. Convert if needed, then send.
+"""
+
 import os
 import re
 import time
 import subprocess
 import threading
+import glob
+import io
+import base64
+import json
+
 import pyautogui
 import pygetwindow as gw
-from pathlib import Path
-import base64
 from PIL import ImageGrab
-import json
+
 from engine.config import LLM_KEY
 
 
-#  GEMINI VISION — Screen-based file detection
+# ─────────────────────────────────────────────────────────────────────────────
+#  GEMINI CLIENT
+# ─────────────────────────────────────────────────────────────────────────────
 
-def get_gemini_client():
-    """Initialize Gemini client."""
+def _get_gemini_model():
+    """Returns an initialised Gemini GenerativeModel, or None on failure."""
     try:
         import google.generativeai as genai
-        if not LLM_KEY:
-            print("[FileShare] No Gemini API key found")
-            return None
-        genai.configure(api_key=LLM_KEY)
-        return genai
     except ImportError:
-        print("[FileShare] google-generativeai not installed. Installing...")
         subprocess.run(["pip", "install", "google-generativeai"], capture_output=True)
         import google.generativeai as genai
+
+    if not LLM_KEY:
+        print("[FileShare] No Gemini API key in LLM_KEY.")
+        return None
+
+    try:
         genai.configure(api_key=LLM_KEY)
-        return genai
+        return genai.GenerativeModel("gemini-2.0-flash-exp")
     except Exception as e:
         print(f"[FileShare] Gemini init error: {e}")
         return None
 
 
-def detect_files_on_screen(speak_fn=None) -> list:
+# ─────────────────────────────────────────────────────────────────────────────
+#  GEMINI VISION — identify which file is open / being worked on on screen
+# ─────────────────────────────────────────────────────────────────────────────
+
+def gemini_detect_open_file_on_screen(speak_fn=None) -> str | None:
     """
-    Captures screen and uses Gemini vision to detect file paths visible on screen.
-    Returns list of detected file paths (excluding system/cache files).
+    Takes a screenshot and asks Gemini Vision:
+      "What document / file is open in the foreground application?"
+
+    Returns the *filename* (e.g. "Sales Report Q3.xlsx") that Gemini identifies,
+    or None.  The caller must then resolve this name to a full path via
+    find_file_smart().
+
+    We deliberately do NOT ask Gemini for a full path — it will hallucinate
+    paths that don't exist.  We only ask for the filename as visible on screen
+    (title bar / tab / watermark / header).
     """
-    # System files to ignore
-    IGNORE_PATTERNS = [
-        '_adapthist', '.pma', '.db-journal', 'cache', 'temp', '~$',
-        'Thumbs.db', 'desktop.ini', '.lnk', '.tmp'
-    ]
-    
+    model = _get_gemini_model()
+    if model is None:
+        return None
+
     try:
-        import google.generativeai as genai
-        
-        genai_client = get_gemini_client()
-        if not genai_client:
-            return []
-
-        # Capture screen
-        print("[FileShare] Capturing screen for file detection...")
+        print("[FileShare] Capturing screen for Gemini Vision analysis...")
         screenshot = ImageGrab.grab()
-        
-        # Convert to base64 for Gemini
-        import io
-        buffered = io.BytesIO()
-        screenshot.save(buffered, format="PNG")
-        img_data = base64.b64encode(buffered.getvalue()).decode()
 
-        # Send to Gemini
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        prompt = """Analyze this screenshot and identify ONLY document/data files visible on screen.
-        Focus on: Excel files (.xlsx, .xls), Word docs (.docx, .doc), PDFs, presentations (.pptx),
-        images (jpg, png), text files. IGNORE system files, cache files, temp files, DLL files.
-        
-        Return a JSON object with format:
-        {
-            "files": [
-                {"path": "full/file/path.ext", "confidence": 0.95},
-                {"path": "another/file.ext", "confidence": 0.85}
-            ],
-            "description": "what files were detected"
-        }
-        
-        Only return valid JSON, no other text."""
+        buf = io.BytesIO()
+        screenshot.save(buf, format="PNG")
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        prompt = """Look at this screenshot carefully.
+
+Your task: identify the NAME of the file/document that is currently OPEN and
+in the FOREGROUND (i.e., the active/focused window the user is working on).
+
+Look for clues in:
+- The title bar of the foreground window (e.g. "Sales_Report.xlsx - Microsoft Excel")
+- Browser tabs (e.g. a PDF open in Chrome)
+- The document header/watermark
+- Any visible filename near the top of the active window
+
+Return ONLY a JSON object — no markdown, no explanation:
+{
+  "filename": "exact filename with extension as shown on screen",
+  "confidence": 0.95,
+  "app": "application name, e.g. Microsoft Excel / Adobe Acrobat / Word"
+}
+
+If you cannot identify any open file with reasonable confidence, return:
+{"filename": null, "confidence": 0, "app": null}"""
 
         response = model.generate_content([
-            {
-                "mime_type": "image/png",
-                "data": img_data,
-            },
-            prompt
+            {"mime_type": "image/png", "data": img_b64},
+            prompt,
         ])
-        
-        response_text = response.text.strip()
-        
-        # Extract JSON from response
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group())
-            files = []
-            for f in data.get("files", []):
-                fpath = f["path"]
-                if os.path.exists(fpath):
-                    # Skip system/cache files
-                    if any(pattern.lower() in fpath.lower() for pattern in IGNORE_PATTERNS):
-                        print(f"[FileShare] Skipping system file: {fpath}")
-                        continue
-                    files.append(fpath)
-            print(f"[FileShare] Detected {len(files)} valid files on screen: {files}")
-            return files
-        
+
+        text = response.text.strip()
+        # Strip ```json fences if present
+        text = re.sub(r"```(?:json)?", "", text).strip().strip("`").strip()
+
+        data = json.loads(text)
+        filename = data.get("filename")
+        confidence = data.get("confidence", 0)
+
+        if filename and confidence >= 0.6:
+            print(f"[FileShare] Gemini Vision identified: '{filename}' "
+                  f"(confidence={confidence}, app={data.get('app')})")
+            return filename
+        else:
+            print(f"[FileShare] Gemini Vision: no file identified (confidence={confidence})")
+            return None
+
+    except json.JSONDecodeError as e:
+        print(f"[FileShare] Gemini returned non-JSON: {e}\nRaw: {text!r}")
     except Exception as e:
-        print(f"[FileShare] Screen detection error: {e}")
-    
-    return []
+        print(f"[FileShare] Gemini Vision error: {e}")
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  SMART FILE FINDER — resolves a filename to a full path
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SEARCH_DIRS = [
+    os.path.expanduser("~\\Desktop"),
+    os.path.expanduser("~\\Documents"),
+    os.path.expanduser("~\\Downloads"),
+    os.path.join(os.environ.get("USERPROFILE", ""), "OneDrive"),
+    os.path.join(os.environ.get("USERPROFILE", ""), "OneDrive", "Documents"),
+    os.path.join(os.environ.get("USERPROFILE", ""), "OneDrive", "Desktop"),
+]
 
 
 def find_file_smart(filename: str, speak_fn=None) -> str | None:
     """
-    Intelligently find a file by:
-    1. Checking recent files
-    2. Searching common directories recursively
-    3. Checking currently open files
-    4. Using file indexing if available
-    """
-    import glob
-    
-    filename_lower = filename.lower()
-    
-    # 1. Check active file first
-    active = get_active_file_path()
-    if active and os.path.basename(active).lower() == filename_lower:
-        return active
-    
-    # 2. Common search directories
-    search_dirs = [
-        os.path.expanduser("~\\Desktop"),
-        os.path.expanduser("~\\Documents"),
-        os.path.expanduser("~\\Downloads"),
-        os.path.expanduser("~\\OneDrive\\Documents"),
-        os.path.join(os.environ.get("USERPROFILE", ""), "OneDrive"),
-    ]
-    
-    # Add current working directory
-    search_dirs.insert(0, os.getcwd())
-    
-    for base_dir in search_dirs:
-        if not os.path.exists(base_dir):
-            continue
-            
-        try:
-            # Exact match first
-            for root, dirs, files in os.walk(base_dir):
-                for f in files:
-                    if f.lower() == filename_lower:
-                        full_path = os.path.join(root, f)
-                        print(f"[FileShare] Found exact match: {full_path}")
-                        return full_path
-            
-            # Partial match
-            for root, dirs, files in os.walk(base_dir):
-                for f in files:
-                    if filename_lower in f.lower():
-                        full_path = os.path.join(root, f)
-                        print(f"[FileShare] Found partial match: {full_path}")
-                        return full_path
-                        
-        except Exception as e:
-            continue
-    
-    # 3. Try Windows search/indexing via PowerShell
-    try:
-        ps_cmd = f'Get-ChildItem -Path $env:USERPROFILE -Recurse -Filter "*{filename}*" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName'
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_cmd],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            found_path = result.stdout.strip()
-            if os.path.exists(found_path):
-                print(f"[FileShare] Found via PowerShell: {found_path}")
-                return found_path
-    except:
-        pass
-    
-    return None
+    Intelligently locate *filename* on disk.
 
-
-#  EXCEL → PDF CONVERTER
-
-def convert_excel_to_pdf(excel_path: str, speak_fn) -> str | None:
+    Priority:
+      1. Check currently active Office file (exact name match)
+      2. Exact-name walk across common directories
+      3. Partial-name walk
+      4. PowerShell fallback (Windows file indexing)
     """
-    Converts .xlsx to .pdf using LibreOffice (silent, fastest method).
-    Falls back to win32com (MS Office) if LibreOffice not found.
-    Returns pdf_path or None.
-    """
-    excel_path = os.path.abspath(excel_path)
-    if not os.path.exists(excel_path):
-        speak_fn("I couldn't find that Excel file. Please check the path.")
+    filename_lower = filename.lower().strip()
+    if not filename_lower:
         return None
 
-    pdf_path = os.path.splitext(excel_path)[0] + ".pdf"
-    out_dir  = os.path.dirname(excel_path)
+    # 1. Quick check: is the active file this one?
+    active = get_active_file_path()
+    if active and os.path.basename(active).lower() == filename_lower:
+        print(f"[FileShare] Active file matches query: {active}")
+        return active
 
-    #  Method 1: LibreOffice (silent, no UI) 
-    libre = _find_libreoffice()
-    if libre:
-        try:
-            print(f"[FileShare] Converting via LibreOffice: {excel_path}")
-            result = subprocess.run([
-                libre,
-                "--headless", "--convert-to", "pdf",
-                "--outdir", out_dir, excel_path
-            ], capture_output=True, timeout=30)
-            if result.returncode == 0 and os.path.exists(pdf_path):
-                print(f"[FileShare] PDF ready: {pdf_path}")
-                return pdf_path
-        except Exception as e:
-            print(f"[FileShare] LibreOffice error: {e}")
+    search_dirs = [os.getcwd()] + [d for d in _SEARCH_DIRS if os.path.isdir(d)]
 
-    #  Method 2: win32com (MS Excel must be installed) 
+    # 2. Exact-name match
+    for base in search_dirs:
+        for root, _dirs, files in os.walk(base):
+            for f in files:
+                if f.lower() == filename_lower:
+                    full = os.path.join(root, f)
+                    print(f"[FileShare] Exact match: {full}")
+                    return full
+
+    # 3. Partial-name match (filename_lower is a substring)
+    for base in search_dirs:
+        for root, _dirs, files in os.walk(base):
+            for f in files:
+                if filename_lower in f.lower():
+                    full = os.path.join(root, f)
+                    print(f"[FileShare] Partial match: {full}")
+                    return full
+
+    # 4. PowerShell search (uses Windows Search index)
     try:
-        import win32com.client
-        print(f"[FileShare] Converting via MS Excel COM...")
-        excel_app = win32com.client.Dispatch("Excel.Application")
-        excel_app.Visible = False
-        wb = excel_app.Workbooks.Open(excel_path)
-        wb.ExportAsFixedFormat(0, pdf_path)  # 0 = xlTypePDF
-        wb.Close(False)
-        excel_app.Quit()
-        if os.path.exists(pdf_path):
-            print(f"[FileShare] PDF ready: {pdf_path}")
-            return pdf_path
+        ps = (
+            f'Get-ChildItem -Path $env:USERPROFILE -Recurse '
+            f'-Filter "*{filename}*" -ErrorAction SilentlyContinue '
+            f'| Select-Object -First 1 -ExpandProperty FullName'
+        )
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=15,
+        )
+        found = result.stdout.strip()
+        if result.returncode == 0 and found and os.path.exists(found):
+            print(f"[FileShare] PowerShell found: {found}")
+            return found
     except Exception as e:
-        print(f"[FileShare] win32com error: {e}")
+        print(f"[FileShare] PowerShell search failed: {e}")
 
-    speak_fn("I couldn't convert the Excel file. Please make sure LibreOffice or Microsoft Excel is installed.")
+    print(f"[FileShare] Could not find: {filename}")
     return None
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  ACTIVE FILE DETECTION (COM / psutil / window title)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CACHE_IGNORE = [
+    "inetcache", "localappdata\\microsoft\\windows",
+    "\\appdata\\local\\temp", "\\appdata\\roaming\\microsoft",
+    "\\$recycle", "\\~$", "appdata\\locallow",
+]
+
+_FILE_IGNORE_PATTERNS = [
+    "_adapthist", ".pma", ".db-journal", "cache", "~$",
+    "thumbs.db", "desktop.ini", ".lnk", ".tmp",
+]
+
+
+def _is_cache_path(path: str) -> bool:
+    pl = path.lower()
+    return any(p in pl for p in _CACHE_IGNORE)
+
+
+def _get_active_file_psutil(process_name: str, extensions: list[str]) -> str | None:
+    try:
+        import psutil
+        for proc in psutil.process_iter(["name"]):
+            if not proc.info["name"]:
+                continue
+            if process_name.lower() not in proc.info["name"].lower():
+                continue
+            try:
+                best = None
+                for f in proc.open_files():
+                    if not any(f.path.lower().endswith(ext) for ext in extensions):
+                        continue
+                    if "~$" in f.path or _is_cache_path(f.path):
+                        continue
+                    # Prefer user-facing directories
+                    pl = f.path.lower()
+                    if any(k in pl for k in ("desktop", "documents", "downloads", "onedrive")):
+                        print(f"[FileShare] psutil (user dir): {f.path}")
+                        return f.path
+                    best = best or f.path
+                if best:
+                    print(f"[FileShare] psutil: {best}")
+                    return best
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return None
+
+
+def _title_to_path(title_fragment: str, extensions: list[str]) -> str | None:
+    """Search common dirs for a filename extracted from a window title."""
+    frag = title_fragment.strip()
+    if not frag:
+        return None
+    for base in _SEARCH_DIRS:
+        if not os.path.isdir(base):
+            continue
+        # Exact
+        for root, _, files in os.walk(base):
+            for f in files:
+                if f.lower() == frag.lower():
+                    return os.path.join(root, f)
+        # Try adding known extensions
+        if not any(frag.lower().endswith(e) for e in extensions):
+            for ext in extensions:
+                matches = glob.glob(
+                    os.path.join(base, "**", frag + ext), recursive=True
+                )
+                if matches:
+                    return matches[0]
+    return None
+
+
+def get_active_excel_path() -> str | None:
+    # 1. COM
+    try:
+        import win32com.client
+        xl = win32com.client.GetActiveObject("Excel.Application")
+        wb = xl.ActiveWorkbook
+        if wb and wb.FullName and os.path.exists(wb.FullName):
+            print(f"[FileShare] Excel COM: {wb.FullName}")
+            return wb.FullName
+    except Exception:
+        pass
+
+    # 2. psutil
+    path = _get_active_file_psutil("excel.exe", [".xlsx", ".xls", ".xlsm", ".csv"])
+    if path:
+        return path
+
+    # 3. Window title
+    try:
+        for win in gw.getWindowsWithTitle("Excel"):
+            name = win.title.split(" - ")[0].strip()
+            path = _title_to_path(name, [".xlsx", ".xls", ".xlsm", ".csv"])
+            if path:
+                return path
+    except Exception:
+        pass
+    return None
+
+
+def get_active_word_path() -> str | None:
+    try:
+        import win32com.client
+        word = win32com.client.GetActiveObject("Word.Application")
+        doc = word.ActiveDocument
+        if doc and doc.FullName and os.path.exists(doc.FullName):
+            return doc.FullName
+    except Exception:
+        pass
+
+    path = _get_active_file_psutil("winword.exe", [".docx", ".doc"])
+    if path:
+        return path
+
+    try:
+        for win in gw.getWindowsWithTitle("Word"):
+            name = win.title.split(" - ")[0].strip()
+            path = _title_to_path(name, [".docx", ".doc"])
+            if path:
+                return path
+    except Exception:
+        pass
+    return None
+
+
+def get_active_ppt_path() -> str | None:
+    try:
+        import win32com.client
+        ppt = win32com.client.GetActiveObject("PowerPoint.Application")
+        pres = ppt.ActivePresentation
+        if pres and pres.FullName and os.path.exists(pres.FullName):
+            return pres.FullName
+    except Exception:
+        pass
+
+    return _get_active_file_psutil("powerpnt.exe", [".pptx", ".ppt"])
+
+
+def get_active_file_path() -> str | None:
+    """
+    Returns path of currently open file (Excel → Word → PPT → foreground window).
+    """
+    for fn in (get_active_excel_path, get_active_word_path, get_active_ppt_path):
+        path = fn()
+        if path:
+            return path
+
+    # Foreground window title fallback
+    try:
+        active_win = gw.getActiveWindow()
+        if active_win:
+            match = re.search(
+                r"([a-zA-Z0-9_\- ]+\.(pdf|docx|xlsx|pptx|png|jpg|txt|csv|xlsm))",
+                active_win.title,
+                re.IGNORECASE,
+            )
+            if match:
+                fname = match.group(1).strip()
+                for base in _SEARCH_DIRS:
+                    candidate = os.path.join(base, fname)
+                    if os.path.exists(candidate):
+                        return candidate
+    except Exception:
+        pass
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  EXCEL → PDF CONVERTER
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _find_libreoffice() -> str | None:
     candidates = [
         r"C:\Program Files\LibreOffice\program\soffice.exe",
         r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
     ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-    # Try PATH
+    for p in candidates:
+        if os.path.exists(p):
+            return p
     try:
-        result = subprocess.run(["where", "soffice"], capture_output=True, text=True, timeout=3)
-        if result.returncode == 0:
-            return result.stdout.strip().split("\n")[0].strip()
-    except:
+        r = subprocess.run(["where", "soffice"], capture_output=True, text=True, timeout=3)
+        if r.returncode == 0:
+            return r.stdout.strip().split("\n")[0].strip()
+    except Exception:
         pass
     return None
 
 
-#  DETECT ACTIVE EXCEL FILE — finds the currently open workbook
+def convert_excel_to_pdf(excel_path: str, speak_fn) -> str | None:
+    excel_path = os.path.abspath(excel_path)
+    if not os.path.exists(excel_path):
+        speak_fn("I couldn't find that Excel file.")
+        return None
 
-def get_active_excel_path() -> str | None:
-    """Finds the path of the currently open Excel file via COM, psutil or title."""
-    # 1. Try COM (Most reliable for focus detection)
+    pdf_path = os.path.splitext(excel_path)[0] + ".pdf"
+    out_dir = os.path.dirname(excel_path)
+
+    # Method 1: LibreOffice (headless)
+    libre = _find_libreoffice()
+    if libre:
+        try:
+            result = subprocess.run(
+                [libre, "--headless", "--convert-to", "pdf", "--outdir", out_dir, excel_path],
+                capture_output=True, timeout=60,
+            )
+            if result.returncode == 0 and os.path.exists(pdf_path):
+                print(f"[FileShare] PDF via LibreOffice: {pdf_path}")
+                return pdf_path
+        except Exception as e:
+            print(f"[FileShare] LibreOffice error: {e}")
+
+    # Method 2: win32com (MS Excel)
     try:
         import win32com.client
-        xl = win32com.client.GetActiveObject("Excel.Application")
-        wb = xl.ActiveWorkbook
-        if wb and wb.FullName and os.path.exists(wb.FullName):
-            print(f"[FileShare] Excel COM found: {wb.FullName}")
-            return wb.FullName
-    except:
-        pass
-
-    # 2. Try psutil (Robust for finding what files are actually open by the process)
-    path = _get_active_file_from_psutil("excel.exe", [".xlsx", ".xls", ".xlsm", ".csv"])
-    if path: return path
-
-    # 3. Try Window Title matching + Search
-    try:
-        import pygetwindow as gw
-        for win in gw.getWindowsWithTitle("Excel"):
-            title = win.title
-            filename = title.split(" - ")[0].strip()
-            if not filename: continue
-
-            # Search common locations recursively
-            search_dirs = [
-                os.path.join(os.environ.get("USERPROFILE", ""), "OneDrive"),
-                os.path.expanduser("~\\Documents"),
-                os.path.expanduser("~\\Desktop"),
-                os.path.expanduser("~\\Downloads"),
-            ]
-            
-            exts = [".xlsx", ".xls", ".xlsm", ".csv"]
-            for d in search_dirs:
-                if not os.path.exists(d): continue
-                # Search recursively for this filename
-                import glob
-                matches = glob.glob(os.path.join(d, "**", filename), recursive=True)
-                if matches: return matches[0]
-                
-                # Try adding extensions if missing
-                if not any(filename.lower().endswith(e) for e in exts):
-                    for ext in exts:
-                        matches = glob.glob(os.path.join(d, "**", filename + ext), recursive=True)
-                        if matches: return matches[0]
+        xl_app = win32com.client.Dispatch("Excel.Application")
+        xl_app.Visible = False
+        wb = xl_app.Workbooks.Open(excel_path)
+        wb.ExportAsFixedFormat(0, pdf_path)   # 0 = xlTypePDF
+        wb.Close(False)
+        xl_app.Quit()
+        if os.path.exists(pdf_path):
+            print(f"[FileShare] PDF via win32com: {pdf_path}")
+            return pdf_path
     except Exception as e:
-        print(f"[FileShare] get_active_excel_path error: {e}")
+        print(f"[FileShare] win32com error: {e}")
+
+    speak_fn("Couldn't convert — please install LibreOffice or Microsoft Excel.")
     return None
 
 
-def _get_active_file_from_psutil(process_name, extensions):
-    """Lists open files for a process and returns the first matching one.
-    Excludes cache and temp files.
-    """
-    # Paths to IGNORE (cache, temp, system files)
-    IGNORE_PATHS = [
-        "inetcache",
-        "localappdata\\microsoft\\windows",
-        "\\appdata\\local\\temp",
-        "\\appdata\\roaming\\microsoft",
-        "\\$recycle",
-        "\\~$",
-        "appdata\\locallow",
+# ─────────────────────────────────────────────────────────────────────────────
+#  WHATSAPP DESKTOP SENDER
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_whatsapp_window():
+    try:
+        wins = gw.getWindowsWithTitle("WhatsApp")
+        for w in wins:
+            if "settings" not in w.title.lower():
+                return w
+        if wins:
+            return wins[0]
+    except Exception:
+        pass
+    return None
+
+
+def _open_whatsapp_desktop():
+    wa = _get_whatsapp_window()
+    if wa:
+        try:
+            wa.activate()
+            print("[FileShare] WhatsApp already open — activated.")
+            return
+        except Exception:
+            pass
+
+    print("[FileShare] Launching WhatsApp Desktop...")
+    # Try URI scheme first (works for Windows Store app)
+    subprocess.Popen("start whatsapp://", shell=True)
+    time.sleep(5)
+    if _get_whatsapp_window():
+        return
+
+    # Try known exe paths
+    wa_paths = [
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "WhatsApp", "WhatsApp.exe"),
+        r"C:\Program Files\WhatsApp\WhatsApp.exe",
     ]
-    
-    try:
-        import psutil
-        for proc in psutil.process_iter(['name']):
-            if proc.info['name'] and process_name.lower() in proc.info['name'].lower():
-                try:
-                    best_file = None
-                    for f in proc.open_files():
-                        if any(f.path.lower().endswith(ext) for ext in extensions):
-                            # Skip temp/cache/system files
-                            if "~$" in f.path:
-                                continue
-                            
-                            # Skip Windows cache and temp paths
-                            is_ignore_path = False
-                            for ignore in IGNORE_PATHS:
-                                if ignore.lower() in f.path.lower():
-                                    is_ignore_path = True
-                                    print(f"[FileShare] Skipping cache file: {f.path}")
-                                    break
-                            
-                            if is_ignore_path:
-                                continue
-                            
-                            # Prefer user document files over others
-                            if "desktop" in f.path.lower() or "documents" in f.path.lower() or "downloads" in f.path.lower():
-                                print(f"[FileShare] psutil found (user file): {f.path}")
-                                return f.path
-                            
-                            # Keep this as backup
-                            if not best_file:
-                                best_file = f.path
-                    
-                    # Return backup if we have one
-                    if best_file:
-                        print(f"[FileShare] psutil found: {best_file}")
-                        return best_file
-                except: pass
-    except: pass
-    return None
+    for p in wa_paths:
+        if os.path.exists(p):
+            subprocess.Popen([p])
+            time.sleep(5)
+            return
+
+    subprocess.Popen("whatsapp", shell=True)
+    time.sleep(5)
 
 
-def get_active_word_path() -> str | None:
-    """Finds the path of the currently open Word document via COM, psutil or title."""
-    try:
-        import win32com.client
-        word_app = win32com.client.GetActiveObject("Word.Application")
-        doc = word_app.ActiveDocument
-        if doc and doc.FullName and os.path.exists(doc.FullName):
-            return doc.FullName
-    except:
-        pass
-    
-    path = _get_active_file_from_psutil("winword.exe", [".docx", ".doc"])
-    if path: return path
-        
-    # Fallback to title
-    try:
-        import pygetwindow as gw
-        for win in gw.getWindowsWithTitle("Word"):
-            filename = win.title.split(" - ")[0].strip()
-            if not filename: continue
-            search_dirs = [os.path.join(os.environ.get("USERPROFILE", ""), "OneDrive"), 
-                           os.path.expanduser("~\\Documents")]
-            for d in search_dirs:
-                if not os.path.exists(d): continue
-                import glob
-                matches = glob.glob(os.path.join(d, "**", filename), recursive=True)
-                if matches: return matches[0]
-    except: pass
-    return None
+def _focus_whatsapp():
+    wa = _get_whatsapp_window()
+    if wa:
+        try:
+            wa.activate()
+        except Exception:
+            pyautogui.click(wa.left + wa.width // 2, wa.top + wa.height // 2)
+        time.sleep(0.5)
+    return wa
 
-
-def get_active_ppt_path() -> str | None:
-    """Finds the path of the currently open PowerPoint presentation via COM or psutil."""
-    try:
-        import win32com.client
-        ppt_app = win32com.client.GetActiveObject("PowerPoint.Application")
-        pres = ppt_app.ActivePresentation
-        if pres and pres.FullName and os.path.exists(pres.FullName):
-            return pres.FullName
-    except: pass
-
-    path = _get_active_file_from_psutil("powerpnt.exe", [".pptx", ".ppt"])
-    return path
-
-
-def get_active_file_path() -> str | None:
-    """
-    Detects any currently open file (Excel, Word, PDF, PPT) and returns its path.
-    Priority: Excel -> Word -> PPT -> Foreground Window Title Match
-    """
-    # 1. Check Office Apps via COM (Most accurate)
-    path = get_active_excel_path()
-    if path: return path
-    
-    path = get_active_word_path()
-    if path: return path
-    
-    path = get_active_ppt_path()
-    if path: return path
-    
-    # 2. Fallback: Check Active Window Title for common file extensions
-    try:
-        import pygetwindow as gw
-        active_win = gw.getActiveWindow()
-        if active_win:
-            title = active_win.title
-            # Look for common patterns like "Filename.pdf - Adobe Acrobat" or "Image.png - Photos"
-            match = re.search(r'([a-zA-Z0-9_\- ]+\.(pdf|docx|xlsx|pptx|png|jpg|txt|csv|xlsm))', title, re.IGNORECASE)
-            if match:
-                filename = match.group(1).strip()
-                # Search common locations
-                search_dirs = [
-                    os.path.expanduser("~\\Desktop"),
-                    os.path.expanduser("~\\Documents"),
-                    os.path.expanduser("~\\Downloads"),
-                    os.path.expanduser("~\\OneDrive\\Documents"),
-                ]
-                for d in search_dirs:
-                    candidate = os.path.join(d, filename)
-                    if os.path.exists(candidate):
-                        return candidate
-    except:
-        pass
-        
-    return None
-
-
-
-#  SEND VIA WHATSAPP DESKTOP (native UI automation)
 
 def send_whatsapp_file(contact_name: str, file_path: str, speak_fn) -> bool:
     """
-    Opens WhatsApp Desktop, searches for contact, attaches file using file picker,
-    and sends the file. Works like a human would.
+    Opens WhatsApp Desktop → searches contact → attaches file via the
+    native file-picker dialog (opened with Ctrl+Shift+A or the clip icon)
+    → sends.
     """
     import pyperclip
-    import subprocess
 
     file_path = os.path.abspath(file_path)
     if not os.path.exists(file_path):
         speak_fn("The file doesn't exist. Cannot send.")
         return False
 
-    speak_fn(f"Opening WhatsApp Desktop and searching for {contact_name}.")
+    speak_fn(f"Opening WhatsApp and searching for {contact_name}.")
 
-    #  Step 1: Open WhatsApp Desktop 
+    # ── Step 1: Open WhatsApp ──────────────────────────────────────────────
     _open_whatsapp_desktop()
     time.sleep(3)
 
-    #  Step 2: Search for contact using Ctrl+F 
-    print(f"[FileShare] Searching for contact: {contact_name}")
-    pyautogui.hotkey("ctrl", "f")
-    time.sleep(1)
-    
-    # Clear any existing search
-    pyautogui.hotkey("ctrl", "a")
-    time.sleep(0.3)
-    
-    # Type contact name
-    pyperclip.copy(contact_name)
-    pyautogui.hotkey("ctrl", "v")
-    time.sleep(2)
-
-    # Open the first result
-    pyautogui.press("enter")
-    time.sleep(2)
-
-    #  Step 3: Open attachment using native Windows file picker 
-    print("[FileShare] Opening file attachment dialog...")
-    
-    # Use Windows file picker (explorer) directly and copy file
-    # This is more reliable than trying to click on WhatsApp buttons
-    try:
-        # Open Explorer to the file
-        subprocess.Popen(['explorer', '/select,', file_path])
-        time.sleep(2)
-        
-        # Copy the file
-        pyautogui.hotkey("ctrl", "c")
-        time.sleep(0.5)
-        
-        # Close explorer
-        pyautogui.hotkey("alt", "f4")
-        time.sleep(1)
-        
-        # Focus back to WhatsApp
-        wa_win = _get_whatsapp_window()
-        if wa_win:
-            try:
-                wa_win.activate()
-            except:
-                # Click on WhatsApp window area
-                pyautogui.click(wa_win.left + wa_win.width//2, wa_win.top + wa_win.height//2)
-        
-        time.sleep(1)
-        
-        # Now paste the file in WhatsApp message input
-        print(f"[FileShare] Pasting file into chat: {file_path}")
-        pyautogui.hotkey("ctrl", "v")
-        time.sleep(2)
-        
-        # Wait for attachment preview to appear
-        print("[FileShare] Waiting for attachment to be ready...")
-        time.sleep(2)
-        
-    except Exception as e:
-        print(f"[FileShare] File attachment error: {e}")
-        speak_fn("There was an issue attaching the file. Please try again.")
+    wa = _focus_whatsapp()
+    if not wa:
+        speak_fn("Could not open WhatsApp Desktop. Is it installed?")
         return False
 
-    #  Step 4: Send message 
-    print("[FileShare] Sending file to WhatsApp...")
-    # Click send button (usually Enter key)
+    # ── Step 2: Search for contact ─────────────────────────────────────────
+    print(f"[FileShare] Searching contact: {contact_name}")
+    pyautogui.hotkey("ctrl", "f")
+    time.sleep(1.0)
+    pyautogui.hotkey("ctrl", "a")
+    time.sleep(0.2)
+    pyperclip.copy(contact_name)
+    pyautogui.hotkey("ctrl", "v")
+    time.sleep(2.5)      # let search results populate
+    pyautogui.press("enter")
+    time.sleep(2.0)      # let chat open
+
+    # ── Step 3: Open attach dialog (Ctrl+Shift+A is WhatsApp's shortcut) ──
+    print("[FileShare] Opening attachment dialog...")
+    _focus_whatsapp()
+    pyautogui.hotkey("ctrl", "shift", "a")
+    time.sleep(2.0)
+
+    # If the native file picker didn't open, try clicking the paperclip
+    # (visual coordinates are approximate — works best maximised)
+    # As a fallback we just type the path into the Windows open-file dialog
+    # which has an address bar we can reach with Ctrl+L.
+
+    # ── Step 4: Type file path into the Windows Open dialog ───────────────
+    # The Windows open-file dialog's address bar is accessible via Ctrl+L
+    # (same as Explorer). We send the full absolute path and press Enter.
+    print(f"[FileShare] Typing file path: {file_path}")
+    time.sleep(0.5)
+
+    # Try to focus the filename box directly first (works on most dialogs)
+    pyperclip.copy(file_path)
+
+    # Navigate the filename field
+    pyautogui.hotkey("ctrl", "l")          # focus address/file bar
+    time.sleep(0.4)
+    pyautogui.hotkey("ctrl", "a")
+    time.sleep(0.2)
+    pyautogui.hotkey("ctrl", "v")          # paste full path
+    time.sleep(0.3)
+    pyautogui.press("enter")               # confirm selection
+    time.sleep(2.5)                        # wait for attachment preview
+
+    # ── Step 5: Send ──────────────────────────────────────────────────────
+    print("[FileShare] Sending...")
+    _focus_whatsapp()
     pyautogui.press("enter")
     time.sleep(3)
-    
-    # Verify send was successful by checking if message input is clear
-    print("[FileShare] Verifying file was sent...")
-    time.sleep(2)
 
     speak_fn(f"File sent to {contact_name} on WhatsApp!")
+    print(f"[FileShare] ✓ Sent '{os.path.basename(file_path)}' to {contact_name}")
     return True
 
 
-def _attach_file_whatsapp_desktop(file_path: str, speak_fn) -> bool:
-    """
-    Opens file picker dialog in WhatsApp Desktop and selects the file.
-    This is a fallback method.
-    """
-    try:
-        import pyperclip
-        
-        wa_win = _get_whatsapp_window()
-        if wa_win:
-            try:
-                wa_win.activate()
-            except:
-                pyautogui.click(wa_win.left + wa_win.width//2, wa_win.top + wa_win.height//2)
-            
-            time.sleep(0.5)
-        
-        # Try keyboard shortcut for file attachment
-        # Different WhatsApp versions use different shortcuts
-        shortcuts = [
-            ("ctrl", "shift", "a"),  # Common attachment shortcut
-            ("ctrl", "u"),             # Some versions use this
-            ("shift", "tab"),          # Tab to attachment button
-        ]
-        
-        file_attached = False
-        for shortcut in shortcuts:
-            try:
-                pyautogui.hotkey(*shortcut)
-                time.sleep(1)
-                
-                # Check if file picker dialog opened
-                # If it did, paste the file path
-                pyperclip.copy(file_path)
-                pyautogui.hotkey("ctrl", "l")  # Focus address bar
-                time.sleep(0.3)
-                pyautogui.hotkey("ctrl", "a")
-                pyautogui.hotkey("ctrl", "v")
-                time.sleep(0.5)
-                pyautogui.press("enter")
-                time.sleep(2)
-                file_attached = True
-                break
-            except:
-                continue
-        
-        return file_attached
-    except Exception as e:
-        print(f"[FileShare] Attachment dialog error: {e}")
-        return False
-
-
-def _open_whatsapp_desktop():
-    """Opens WhatsApp Desktop (Windows app) if not already open."""
-    wa_win = _get_whatsapp_window()
-    if wa_win:
-        try:
-            # Try safe window activation
-            wa_win.activate()
-            print("[FileShare] WhatsApp window activated")
-            return
-        except Exception as e:
-            print(f"[FileShare] Window activation failed ({e}), will launch fresh")
-            # If activation fails, close and relaunch
-            try:
-                wa_win.close()
-                time.sleep(1)
-            except:
-                pass
-    
-    # Launch WhatsApp Desktop from Windows Store
-    try:
-        print("[FileShare] Launching WhatsApp Desktop...")
-        # Method 1: Use Windows Store app
-        try:
-            subprocess.Popen("start whatsapp://", shell=True)
-            time.sleep(4)
-            # Check if window appeared
-            wa_win = _get_whatsapp_window()
-            if wa_win:
-                return
-        except:
-            pass
-        
-        # Method 2: Try direct executable paths
-        wa_paths = [
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "WhatsApp", "WhatsApp.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Packages", "5222FC89.WhatsAppDesktop_cv1g1gvanyjgm", "LocalCache", "Roaming", "WhatsApp", "WhatsApp.exe"),
-            "C:\\Program Files\\WhatsApp\\WhatsApp.exe",
-        ]
-        
-        for path in wa_paths:
-            if os.path.exists(path):
-                print(f"[FileShare] Found WhatsApp at: {path}")
-                subprocess.Popen([path])
-                time.sleep(4)
-                return
-        
-        # Method 3: Try to launch from PATH
-        try:
-            subprocess.Popen("whatsapp", shell=True)
-            time.sleep(4)
-        except:
-            pass
-            
-    except Exception as e:
-        print(f"[FileShare] Error opening WhatsApp: {e}")
-
-
-def _get_whatsapp_window():
-    """Gets the WhatsApp Desktop window handle."""
-    try:
-        wins = gw.getWindowsWithTitle("WhatsApp")
-        if wins:
-            # Filter to get the main window (not Settings or other dialogs)
-            for win in wins:
-                if "WhatsApp" in win.title and "settings" not in win.title.lower():
-                    return win
-            return wins[0]
-    except:
-        pass
-    return None
-
-
-#  UPLOAD TO GOOGLE DRIVE (browser automation)
+# ─────────────────────────────────────────────────────────────────────────────
+#  GOOGLE DRIVE UPLOADER
+# ─────────────────────────────────────────────────────────────────────────────
 
 def upload_to_google_drive(file_path: str, speak_fn) -> bool:
-    """
-    Opens Google Drive in Chrome, uploads the file using drag-drop API
-    via pyautogui — no OAuth needed, uses your already logged-in session.
-    """
     import webbrowser
     import pyperclip
 
@@ -684,48 +591,46 @@ def upload_to_google_drive(file_path: str, speak_fn) -> bool:
         speak_fn("The file doesn't exist. Cannot upload.")
         return False
 
-    speak_fn("Opening Google Drive. Please wait while I upload the file.")
-
-    #  Step 1: Open Google Drive 
+    speak_fn("Opening Google Drive. Please wait...")
     webbrowser.open("https://drive.google.com/drive/my-drive")
-    time.sleep(5)   # wait for Drive to load
+    time.sleep(6)
 
-    #  Step 2: Focus Chrome window 
-    chrome_win = None
+    # Focus browser
     for win in gw.getAllWindows():
-        if "Google Drive" in win.title and ("Chrome" in win.title or "Brave" in win.title or "Edge" in win.title):
-            chrome_win = win
+        if "Google Drive" in win.title:
+            try:
+                win.activate()
+            except Exception:
+                pass
             break
-    if not chrome_win:
-        # Just use the last active browser window
-        time.sleep(2)
-        pyautogui.hotkey("alt", "tab")
-        time.sleep(1)
 
-    #  Step 3: Use keyboard shortcut to open file upload 
-    # Google Drive shortcut: press 'c' to open New menu, then 'u' for upload
+    time.sleep(1)
+
+    # Google Drive keyboard shortcuts: 'c' → New menu, then 'u' → Upload file
     pyautogui.press("c")
     time.sleep(1.5)
-    pyautogui.press("u")           # "Upload file"
-    time.sleep(2)
+    pyautogui.press("u")
+    time.sleep(2.5)  # wait for file picker
 
-    #  Step 4: File picker dialog — paste path 
+    # Paste file path into the picker
     pyperclip.copy(file_path)
+    pyautogui.hotkey("ctrl", "l")      # focus address bar of Open dialog
+    time.sleep(0.4)
     pyautogui.hotkey("ctrl", "a")
     pyautogui.hotkey("ctrl", "v")
-    time.sleep(0.5)
+    time.sleep(0.3)
     pyautogui.press("enter")
-    time.sleep(4)   # wait for upload
+    time.sleep(5)   # wait for upload
 
     speak_fn(f"File uploaded to Google Drive successfully!")
     return True
 
 
-
-#  SEND VIA EMAIL
+# ─────────────────────────────────────────────────────────────────────────────
+#  EMAIL SENDER
+# ─────────────────────────────────────────────────────────────────────────────
 
 def send_file_via_email(contact_name: str, file_path: str, speak_fn) -> bool:
-    """Send file as email attachment using your existing email_handler."""
     from engine.email_handler import send_email_with_attachment
     speak_fn(f"Sending the file to {contact_name} via email.")
     try:
@@ -733,215 +638,201 @@ def send_file_via_email(contact_name: str, file_path: str, speak_fn) -> bool:
         if result:
             speak_fn(f"File sent to {contact_name} via email successfully!")
         else:
-            speak_fn("Email could not be sent. Please check your email configuration.")
-        return result
+            speak_fn("Email could not be sent. Check your email configuration.")
+        return bool(result)
     except Exception as e:
         print(f"[FileShare] Email error: {e}")
         speak_fn("Something went wrong with the email.")
         return False
 
 
-#  DETECT SHARE DESTINATION FROM QUERY
+# ─────────────────────────────────────────────────────────────────────────────
+#  DESTINATION PARSER
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Words that look like contact names but are NOT
+_NON_CONTACTS = {
+    "file", "the", "this", "that", "please", "send", "share", "email",
+    "drive", "whatsapp", "telegram", "on", "via", "through", "over", "at",
+    "google", "my", "a", "an", "it",
+}
+
+_PLATFORM_WORDS = {"whatsapp", "drive", "google drive", "email", "gmail", "mail", "telegram"}
+
 
 def detect_share_destination(query: str) -> dict:
     """
-    Returns: {
-        'platform': 'whatsapp' | 'drive' | 'email' | 'telegram' | None,
-        'contact': str | None
-    }
+    Returns:
+      {
+        "platform": "whatsapp" | "drive" | "email" | "telegram" | None,
+        "contact":  str | None,
+        "filename": str | None,   ← explicit filename user mentioned
+      }
     """
-    query_lower = query.lower()
-    result = {"platform": None, "contact": None}
+    ql = query.lower()
+    result = {"platform": None, "contact": None, "filename": None}
 
-    # Detect platform
-    if re.search(r'\bwhatsapp\b', query_lower):
+    # ── Platform ──────────────────────────────────────────────────────────
+    if re.search(r"\bwhatsapp\b", ql):
         result["platform"] = "whatsapp"
-    elif re.search(r'\b(google\s*drive|drive)\b', query_lower):
+    elif re.search(r"\b(google\s*drive|gdrive)\b", ql):
         result["platform"] = "drive"
-    elif re.search(r'\b(email|mail|gmail)\b', query_lower):
+    elif re.search(r"\b(email|gmail|mail)\b", ql):
         result["platform"] = "email"
-    elif re.search(r'\btelegram\b', query_lower):
+    elif re.search(r"\btelegram\b", ql):
         result["platform"] = "telegram"
 
-    # Detect contact name — "send to X on/via/through/over" or just "send to X"
-    # Look specifically for "to [name]" pattern
+    # ── Contact — "to <Name>" where Name is a capitalised word not in blocklist ──
+    # Pattern: "to <Word>" where <Word> starts with capital or is a name
     contact_match = re.search(
-        r'\bto\s+([a-zA-Z]+)\b',
-        query, re.IGNORECASE
+        r"\bto\s+([A-Z][a-zA-Z]*)(?:\s+on|\s+via|\s+through|\s+over|\s*$)",
+        query,
     )
-    
     if contact_match:
-        potential_contact = contact_match.group(1).strip()
-        # Filter out common non-contact words and command words
-        non_contacts = ['file', 'the', 'this', 'that', 'please', 'send', 'share', 'email', 'drive', 
-                       'whatsapp', 'on', 'via', 'through', 'over', 'at']
-        if potential_contact.lower() not in non_contacts:
-            result["contact"] = potential_contact
+        cand = contact_match.group(1).strip()
+        if cand.lower() not in _NON_CONTACTS:
+            result["contact"] = cand
     else:
-        # Fallback: Try alternative patterns for contact detection
-        # For cases like "share with john" or "send with john"
-        contact_match = re.search(
-            r'(?:with|via)\s+([a-zA-Z]+)\b',
-            query, re.IGNORECASE
-        )
+        # Fallback: any capitalised word after "to" not in blocklist
+        contact_match = re.search(r"\bto\s+([a-zA-Z]+)\b", query)
         if contact_match:
-            potential_contact = contact_match.group(1).strip()
-            if potential_contact.lower() not in ['file', 'the', 'this', 'that', 'please']:
-                result["contact"] = potential_contact
+            cand = contact_match.group(1).strip()
+            if cand.lower() not in _NON_CONTACTS:
+                result["contact"] = cand
+
+    # ── Explicit filename — user mentions a specific file ─────────────────
+    # Looks for words ending in a known extension
+    file_match = re.search(
+        r"\b([\w\-. ]+\.(?:xlsx?|docx?|pptx?|pdf|csv|txt|png|jpg))\b",
+        query,
+        re.IGNORECASE,
+    )
+    if file_match:
+        result["filename"] = file_match.group(1).strip()
 
     return result
 
 
-#  MAIN HANDLER — called from command.py
+# ─────────────────────────────────────────────────────────────────────────────
+#  MAIN HANDLER
+# ─────────────────────────────────────────────────────────────────────────────
 
 def handleFileShareCommand(query: str, speak_fn, takecommand_fn):
     """
-    Full pipeline with automatic file detection:
-    1. Extract contact name FIRST
-    2. Check active files (Excel/Word/PPT opened)
-    3. Detect file using vision (screen) if needed
-    4. Convert Excel → PDF if requested
-    5. Execute share to detected platform
+    Full pipeline:
+
+    "jarvis share this file to Didi on WhatsApp"
+      → Gemini vision detects open file → send_whatsapp_file()
+
+    "jarvis send report.xlsx to John on WhatsApp"
+      → find_file_smart("report.xlsx") → send_whatsapp_file()
+
+    "jarvis upload this file to Google Drive"
+      → detect active file / Gemini → upload_to_google_drive()
     """
+    print(f"[FileShare] Query: {query!r}")
 
-    #  Step 0a: Extract contact name and platform FIRST 
+    # ── 0. Parse intent ────────────────────────────────────────────────────
     dest = detect_share_destination(query)
-    print(f"[FileShare] Detected platform: {dest['platform']}, contact: {dest['contact']}")
+    print(f"[FileShare] platform={dest['platform']!r}, "
+          f"contact={dest['contact']!r}, filename={dest['filename']!r}")
 
-    # Step 0b: Try automatic file detection 
+    # ── 1. Resolve file path ───────────────────────────────────────────────
     file_path = None
-    
-    # Priority 1: Check active document in Office apps (most reliable)
-    print("[FileShare] Checking for active files in Office apps...")
-    file_path = get_active_excel_path()
-    if not file_path:
-        file_path = get_active_word_path()
-    if not file_path:
-        file_path = get_active_ppt_path()
-    
-    if file_path:
-        print(f"[FileShare] Found active file: {file_path}")
-        speak_fn(f"Found {os.path.basename(file_path)} that you're working on.")
-    
-    # Priority 2: Check if user mentioned a specific file in query
-    # Use more restrictive regex to avoid capturing contact names
-    if not file_path:
-        filename_match = re.search(
-            r'(?:share|send|upload|attach|file)\s+(?:the\s+)?([a-zA-Z0-9\-_\.\s]+?)(?:\s+(?:to|on|via|with)\b|\s+file)?$',
-            query, re.IGNORECASE
-        )
-        
-        if filename_match:
-            mentioned_file = filename_match.group(1).strip()
-            # Don't use contact name as file
-            if dest["contact"] and mentioned_file.lower() == dest["contact"].lower():
-                mentioned_file = None
-            elif mentioned_file:
-                # Take only the last word if it looks like a filename
-                parts = mentioned_file.split()
-                if parts:
-                    mentioned_file = parts[-1]
-                    print(f"[FileShare] User mentioned file: {mentioned_file}")
-                    speak_fn(f"Looking for {mentioned_file}.")
-                    file_path = find_file_smart(mentioned_file, speak_fn)
-    
-    # Priority 3: Detect from screen using Gemini vision
-    if not file_path:
-        print("[FileShare] Attempting screen-based file detection with Gemini...")
-        speak_fn("Let me check what files are available on your screen.")
-        detected_files = detect_files_on_screen(speak_fn)
-        if detected_files:
-            file_path = detected_files[0]  # Use first detected file
-            speak_fn(f"Found {os.path.basename(file_path)} on your screen.")
-    
-    # Step 1: Is this a convert + share request? 
-    needs_conversion = bool(re.search(
-        r'\b(convert|turn|change)\b.{0,20}\b(excel|xlsx|spreadsheet)\b.{0,20}\b(pdf)\b',
-        query, re.IGNORECASE
-    ))
 
-    if needs_conversion and file_path and file_path.endswith(('.xlsx', '.xls', '.xlsm', '.csv')):
-        speak_fn("Converting Excel to PDF now.")
-        pdf_path = convert_excel_to_pdf(file_path, speak_fn)
-        if pdf_path:
-            file_path = pdf_path
-            speak_fn("Conversion done.")
-        else:
-            return
-    elif needs_conversion:
-        # User wants to convert but no Excel file found
-        speak_fn("I couldn't find an Excel file. Let me help you open one.")
-        # Try to detect Excel file
-        excel_path = get_active_excel_path()
-        if not excel_path:
-            speak_fn("Please tell me the Excel file name.")
-            filename = takecommand_fn()
-            if filename:
-                excel_path = find_file_smart(filename, speak_fn)
-        
-        if excel_path:
-            pdf_path = convert_excel_to_pdf(excel_path, speak_fn)
-            if pdf_path:
-                file_path = pdf_path
-                speak_fn("Conversion done.")
-        else:
-            speak_fn("Sorry, I couldn't find the Excel file.")
-            return
+    # 1a. User explicitly named a file (highest priority)
+    if dest["filename"]:
+        speak_fn(f"Looking for {dest['filename']}.")
+        file_path = find_file_smart(dest["filename"], speak_fn)
+        if not file_path:
+            speak_fn(f"I couldn't find {dest['filename']} on your computer.")
 
+    # 1b. "this file" / "the file" → check active Office window (fast, accurate)
+    if not file_path:
+        print("[FileShare] Checking active Office window...")
+        file_path = get_active_file_path()
+        if file_path:
+            print(f"[FileShare] Active file: {file_path}")
+            speak_fn(f"I see you have {os.path.basename(file_path)} open.")
+
+    # 1c. Gemini Vision — screenshot-based detection (fallback)
+    if not file_path:
+        print("[FileShare] Using Gemini Vision to detect open file...")
+        speak_fn("Let me look at your screen to find the file.")
+        detected_name = gemini_detect_open_file_on_screen(speak_fn)
+        if detected_name:
+            speak_fn(f"Gemini spotted {detected_name}. Searching for it...")
+            file_path = find_file_smart(detected_name, speak_fn)
+            if not file_path:
+                speak_fn(f"I found {detected_name} on screen but can't locate it on disk.")
+
+    # 1d. Ask user as last resort
     if not file_path:
         speak_fn("Which file should I share? Please say the file name.")
-        filename = takecommand_fn()
-        if filename:
-            file_path = find_file_smart(filename, speak_fn)
+        spoken_name = takecommand_fn()
+        if spoken_name:
+            file_path = find_file_smart(spoken_name.strip(), speak_fn)
             if not file_path:
-                speak_fn("I couldn't find that file anywhere. Please open it first.")
+                speak_fn("I couldn't find that file. Please open it first and try again.")
                 return
         else:
             return
 
-    print(f"[FileShare] Will share: {file_path}")
-    speak_fn(f"Found {os.path.basename(file_path)}. Ready to share.")
+    # ── 2. Optional Excel → PDF conversion ────────────────────────────────
+    needs_pdf = bool(re.search(
+        r"\b(convert|turn|change)\b.{0,25}\b(excel|xlsx|spreadsheet)\b.{0,25}\bpdf\b",
+        query,
+        re.IGNORECASE,
+    ))
+    if needs_pdf and file_path.lower().endswith((".xlsx", ".xls", ".xlsm", ".csv")):
+        speak_fn("Converting Excel to PDF…")
+        pdf = convert_excel_to_pdf(file_path, speak_fn)
+        if pdf:
+            file_path = pdf
+            speak_fn("Conversion done.")
+        else:
+            return   # error already spoken inside convert_excel_to_pdf
 
-    # Step 2: Confirm platform (already detected in Step 0) 
+    print(f"[FileShare] Final file: {file_path}")
+    speak_fn(f"Got it — {os.path.basename(file_path)}.")
+
+    # ── 3. Confirm platform if still unknown ──────────────────────────────
     if not dest["platform"]:
         speak_fn("Where should I send it? Say WhatsApp, Google Drive, or Email.")
-        platform_query = takecommand_fn()
-        if "whatsapp" in platform_query.lower():
+        ans = (takecommand_fn() or "").lower()
+        if "whatsapp" in ans:
             dest["platform"] = "whatsapp"
-        elif "drive" in platform_query.lower():
+        elif "drive" in ans:
             dest["platform"] = "drive"
-        elif "email" in platform_query.lower() or "mail" in platform_query.lower():
+        elif "email" in ans or "mail" in ans:
             dest["platform"] = "email"
         else:
             speak_fn("I didn't catch that. Cancelling.")
             return
 
-    # Step 3: Get contact name if needed 
-    if dest["platform"] in ["whatsapp", "email"] and not dest["contact"]:
+    # ── 4. Get contact name if needed ──────────────────────────────────────
+    if dest["platform"] in ("whatsapp", "email") and not dest["contact"]:
         speak_fn("Who should I send it to?")
-        dest["contact"] = takecommand_fn()
+        dest["contact"] = (takecommand_fn() or "").strip()
+        if not dest["contact"]:
+            speak_fn("No contact name given. Cancelling.")
+            return
 
-    #  Step 4: Execute 
-    if dest["platform"] == "whatsapp":
-        threading.Thread(
-            target=send_whatsapp_file,
-            args=(dest["contact"], file_path, speak_fn),
-            daemon=True
-        ).start()
+    # ── 5. Execute (in a daemon thread so Jarvis stays responsive) ────────
+    def _run():
+        if dest["platform"] == "whatsapp":
+            send_whatsapp_file(dest["contact"], file_path, speak_fn)
 
-    elif dest["platform"] == "drive":
-        threading.Thread(
-            target=upload_to_google_drive,
-            args=(file_path, speak_fn),
-            daemon=True
-        ).start()
+        elif dest["platform"] == "drive":
+            upload_to_google_drive(file_path, speak_fn)
 
-    elif dest["platform"] == "email":
-        threading.Thread(
-            target=send_file_via_email,
-            args=(dest["contact"], file_path, speak_fn),
-            daemon=True
-        ).start()
+        elif dest["platform"] == "email":
+            send_file_via_email(dest["contact"], file_path, speak_fn)
 
-    else:
-        speak_fn("I don't support that platform yet.")
+        else:
+            speak_fn("I don't support that platform yet.")
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    # Give the thread a moment to start before returning control
+    time.sleep(0.3)

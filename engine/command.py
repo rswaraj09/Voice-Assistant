@@ -451,16 +451,23 @@ def _is_ml_request(query):
     """
     q = query.lower()
  
-    # Strong ML signals — any single one triggers ML mode
-    strong_signals = [
+    # Strong ML signals — but only if they imply project creation
+    ml_keywords = [
         "machine learning", "ml model", "ai model", "train a model", "train the model",
         "deep learning", "neural network", "random forest", "regression model",
         "classification model", "train and test", "pickle", "sklearn", "scikit",
         "predict using ml", "ml project", "ai project",
     ]
-    for signal in strong_signals:
-        if signal in q:
-            return True
+    
+    # Action words that imply creation
+    action_words  = ["create", "make", "build", "generate", "develop", "train", "start", "new"]
+    
+    has_ml_keyword = any(keyword in q for keyword in ml_keywords)
+    has_action = any(word in q for word in action_words)
+    has_project = "project" in q or "application" in q or "app" in q
+
+    # Only trigger ML mode if it's clearly a project request, not just a question
+    return (has_ml_keyword and (has_action or has_project)) or (has_action and has_project and any(t in q for t in ["predict", "classifier", "regression"]))
  
     # Combination signals — need BOTH an action + a task
     action_words  = ["create", "make", "build", "generate", "develop", "train"]
@@ -567,6 +574,17 @@ def process_query(query):
         if re.search(r'\b(start|enter|activate|open)\s+notes?\s+mode\b', query.lower()):
             from engine.notes_mode import handleNotesMode
             handleNotesMode()
+            return True
+
+        # STUDY MODE
+        if re.search(r'\b(start|enter|activate|open)\s+study\s+mode\b', query.lower()):
+            from engine.study_mode import handleStudyMode
+            handleStudyMode()
+            return True
+
+        #  PRIORITIZE EXPLAIN / WHAT IS — avoid hitting ML/PPT generators for simple questions
+        if re.search(r'\b(explain|what is|how does|tell me about|who is|where is|define)\b', query.lower()):
+            chat_with_nora(query)
             return True
 
         # MODE SYSTEM — checked early so "open X mode" isn't eaten by generic open handler
