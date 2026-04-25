@@ -513,10 +513,10 @@ def _is_file_share_request(query):
         "drive", "bluetooth", "slack", "discord", "mail"
     ])
     # Also trigger if user says "share this file" without platform (we'll ask)
-    has_file = any(w in query for w in [
-        "excel", "spreadsheet", "pdf", "word", "document",
-        "file", "sheet", "ppt", "presentation", "image", "photo", "this"
-    ])
+    # Avoid false positives for plain text messages
+    if ("message" in query or "msg" in query) and not any(w in query for w in ["file", "pdf", "docx", "xlsx", "sheet", "attach", "document"]):
+        return False
+
     return (has_action and (has_target or has_file))
 
 
@@ -706,6 +706,48 @@ def process_query(query):
             handleMLGeneration(query)
             return True
 
+        elif ("send message" in query or "send msg" in query or "message" in query
+              or "phone call" in query or "video call" in query
+              or (("call" in query or "video" in query) and "open" not in query)):
+            from engine.features import findContact
+            contact_no, name = findContact(query)
+            if contact_no != 0:
+                if re.search(r'\b(whatsapp)\b', query):
+                    preferance = "whatsapp"
+                elif re.search(r'\b(mobile|phone|android)\b', query):
+                    preferance = "mobile"
+                else:
+                    speak("Should I use WhatsApp or mobile?")
+                    preferance = takecommand()
+
+                if "mobile" in preferance:
+                    if "message" in query or "msg" in query:
+                        speak("What should I say?")
+                        message_text = takecommand()
+                        from engine.adb_controller import sendSMS
+                        sendSMS(contact_no, message_text, name)
+                    elif "call" in query:
+                        from engine.adb_controller import makePhoneCall
+                        makePhoneCall(contact_no, name)
+                elif "whatsapp" in preferance:
+                    try:
+                        if "message" in query or "msg" in query:
+                            speak("What should I say?")
+                            message_text = takecommand()
+                            from engine.whatsapp_caller import sendWhatsAppMessage
+                            sendWhatsAppMessage(name, message_text)
+
+                        elif "video" in query:
+                            from engine.whatsapp_caller import makeWhatsAppVideoCall
+                            makeWhatsAppVideoCall(contact_no, name)
+                        elif "call" in query:
+                            from engine.whatsapp_caller import makeWhatsAppVoiceCall
+                            makeWhatsAppVoiceCall(contact_no, name)
+                    except Exception as e:
+                        print(f"WhatsApp Error: {e}")
+                        speak("Something went wrong with WhatsApp.")
+            return True
+
         elif _is_file_share_request(query):
             from engine.file_share import handleFileShareCommand
             threading.Thread(
@@ -723,7 +765,7 @@ def process_query(query):
             handleCodeGeneration(query)
             return True
 
-        elif any(w in query for w in ["volume up", "increase volume", "turn up volume", "increase the volume"]):
+        elif any(w in query for w in ["volume up", "increase volume", "turn up volume", "increase the volume", "raise volume", "volume higher"]):
             match = re.search(r'(\d+)', query)
             if match:
                 from engine.system_controls import setVolume
@@ -733,7 +775,7 @@ def process_query(query):
                 volumeUp()
             return True
 
-        elif any(w in query for w in ["volume down", "decrease volume", "turn down volume", "decrease the volume"]):
+        elif any(w in query for w in ["volume down", "decrease volume", "turn down volume", "decrease the volume", "reduce volume", "lower volume", "volume lower"]):
             match = re.search(r'(\d+)', query)
             if match:
                 from engine.system_controls import setVolume
@@ -759,7 +801,7 @@ def process_query(query):
             muteVolume()
             return True
 
-        elif any(w in query for w in ["brightness up", "increase brightness", "brighter", "increase the brightness"]):
+        elif any(w in query for w in ["brightness up", "increase brightness", "brighter", "increase the brightness", "raise brightness"]):
             match = re.search(r'(\d+)', query)
             if match:
                 from engine.system_controls import setBrightness
@@ -769,7 +811,7 @@ def process_query(query):
                 brightnessUp()
             return True
 
-        elif any(w in query for w in ["brightness down", "decrease brightness", "dimmer", "decrease the brightness"]):
+        elif any(w in query for w in ["brightness down", "decrease brightness", "dimmer", "decrease the brightness", "reduce brightness", "lower brightness", "dim the brightness"]):
             match = re.search(r'(\d+)', query)
             if match:
                 from engine.system_controls import setBrightness
@@ -785,9 +827,19 @@ def process_query(query):
             setBrightness(int(match.group()) if match else 50)
             return True
 
-        elif "take screenshot" in query and is_phone_command(query):
-            from engine.adb_controller import takeScreenshot
-            takeScreenshot()
+        elif "take screenshot" in query or "take a screenshot" in query or "capture screen" in query:
+            if is_phone_command(query):
+                from engine.adb_controller import takeScreenshot
+                takeScreenshot()
+            else:
+                import pyautogui
+                # Create a screenshots folder if it doesn't exist
+                ss_dir = os.path.join(PROJECT_DIR, "screenshots")
+                os.makedirs(ss_dir, exist_ok=True)
+                timestamp = time.strftime("%Y%m%d-%H%M%S")
+                ss_path = os.path.join(ss_dir, f"screenshot_{timestamp}.png")
+                pyautogui.screenshot(ss_path)
+                speak("Screenshot taken and saved to your screenshots folder.")
             return True
 
         elif "lock" in query and is_phone_command(query):
@@ -800,45 +852,6 @@ def process_query(query):
             unlockPhone()
             return True
 
-        elif ("send message" in query or "send msg" in query or "message" in query
-              or "phone call" in query or "video call" in query
-              or (("call" in query or "video" in query) and "open" not in query)):
-            from engine.features import findContact, whatsApp
-            contact_no, name = findContact(query)
-            if contact_no != 0:
-                if re.search(r'\b(whatsapp)\b', query):
-                    preferance = "whatsapp"
-                elif re.search(r'\b(mobile|phone|android)\b', query):
-                    preferance = "mobile"
-                else:
-                    speak("Should I use WhatsApp or mobile?")
-                    preferance = takecommand()
-
-                if "mobile" in preferance:
-                    if "message" in query or "msg" in query:
-                        speak("What should I say?")
-                        message_text = takecommand()
-                        from engine.adb_controller import sendSMS
-                        sendSMS(contact_no, message_text, name)
-                    elif "call" in query:
-                        from engine.adb_controller import makePhoneCall
-                        makePhoneCall(contact_no, name)
-                elif "whatsapp" in preferance:
-                    try:
-                        if "message" in query or "msg" in query:
-                            speak("What should I say?")
-                            message_text = takecommand()
-                            whatsApp(contact_no, message_text, 'message', name)
-                        elif "video" in query:
-                            from engine.whatsapp_caller import makeWhatsAppVideoCall
-                            makeWhatsAppVideoCall(contact_no, name)
-                        elif "call" in query:
-                            from engine.whatsapp_caller import makeWhatsAppVoiceCall
-                            makeWhatsAppVoiceCall(contact_no, name)
-                    except Exception as e:
-                        print(f"WhatsApp Error: {e}")
-                        speak("Something went wrong with WhatsApp.")
-            return False
 
         #  VIRTUAL TRY-ON
         elif any(w in query for w in [

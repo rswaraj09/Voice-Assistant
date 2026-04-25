@@ -1,14 +1,3 @@
-"""
-file_share.py  — Jarvis File Sharing Module (Fixed & Improved)
-
-Flow when user says "share this file to Didi on WhatsApp":
-  1. detect_share_destination()  → platform="whatsapp", contact="Didi"
-  2. If user named a file  → find_file_smart()
-  3. Else → get_active_file_path() (COM / psutil)
-  4. Else → gemini_detect_open_file_on_screen()  ← VISION FALLBACK
-  5. Convert if needed, then send.
-"""
-
 import os
 import re
 import time

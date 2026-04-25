@@ -159,24 +159,42 @@ def findContact(query):
 
 #  WHATSAPP
 def whatsApp(mobile_no, message, flag, name):
-    from pipes import quote
-    encoded_message = quote(message) if message else ""
+    import urllib.parse
+    import pyperclip
+    import pygetwindow as gw
+
     clean_no = mobile_no.replace(" ", "")
-    whatsapp_url = f"whatsapp://send?phone={clean_no}&text={encoded_message}"
+    # Use URL to open the chat (very fast and accurate for number)
+    whatsapp_url = f"whatsapp://send?phone={clean_no}"
+    
+    print(f"[WhatsApp] Opening chat for {name} ({clean_no})")
     subprocess.run(f'start "" "{whatsapp_url}"', shell=True)
+    
+    # Wait for WhatsApp to open and focus
     time.sleep(5)
+    
     try:
-        import pygetwindow as gw
         windows = gw.getWindowsWithTitle('WhatsApp')
         if windows:
-            windows[0].activate()
-            time.sleep(0.5)
+            win = windows[0]
+            win.restore()
+            win.activate()
+            time.sleep(1)
     except Exception as e:
-        print(f"Window focus error: {e}")
+        print(f"[WhatsApp] Focus error: {e}")
+
     if flag == 'message':
-        time.sleep(2)
-        pyautogui.press('enter')
-        speak("Message sent successfully to " + name)
+        if message:
+            print(f"[WhatsApp] Sending message: {message}")
+            # Use clipboard for message (bypass URL encoding issues)
+            pyperclip.copy(message)
+            pyautogui.hotkey('ctrl', 'v')
+            time.sleep(0.5)
+            pyautogui.press('enter')
+            speak(f"Message sent successfully to {name}")
+        else:
+            speak(f"Sir, the message for {name} was empty.")
+
 
 
 #  MOBILE CALL (ADB)

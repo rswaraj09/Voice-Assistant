@@ -7,11 +7,11 @@ from engine.command import speak
 
 #  CALIBRATED COORDINATES (your 1920x1080 screen) 
 CALL_BTN_X  = 1711
-CALL_BTN_Y  = 77
-VOICE_OPT_X = 1475
-VOICE_OPT_Y = 211
-VIDEO_OPT_X = 1673
-VIDEO_OPT_Y = 210
+CALL_BTN_Y  = 65
+VOICE_OPT_X = 1505
+VOICE_OPT_Y = 189
+VIDEO_OPT_X = 1697
+VIDEO_OPT_Y = 183
 
 
 #  HELPER: Open WhatsApp 
@@ -141,3 +141,35 @@ def makeWhatsAppVideoCall(mobile_no, name):
     pyautogui.click(VIDEO_OPT_X, VIDEO_OPT_Y)
     time.sleep(1)
     speak(f"Video call started with {name}.")
+
+
+#  SEND MESSAGE 
+
+def sendWhatsAppMessage(name, message):
+    speak(f"Sending message to {name} on WhatsApp.")
+
+    # Step 1: Open WhatsApp
+    open_whatsapp()
+
+    # Step 2: Focus window
+    focus_whatsapp()
+    time.sleep(1)
+
+    # Step 3: Search and open contact
+    search_and_open_contact(name)
+    time.sleep(1)
+
+    # Step 4: Re-focus to be absolutely sure
+    focus_whatsapp()
+    time.sleep(0.5)
+
+    # Step 5: Type/Paste message
+    if message:
+        print(f"[WhatsApp] Pasting message: {message}")
+        pyperclip.copy(message)
+        pyautogui.hotkey('ctrl', 'v')
+        time.sleep(0.5)
+        pyautogui.press('enter')
+        speak(f"Message sent successfully to {name}.")
+    else:
+        speak("The message was empty, so I couldn't send it.")
