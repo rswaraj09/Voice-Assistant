@@ -294,8 +294,8 @@ async def _generate_audio(text, voice=None):
     return None
 
 
-def _get_cache_path(text):
-    key = hashlib.md5(f"{VOICE}{RATE}{text}".encode()).hexdigest()
+def _get_cache_path(text, voice=None):
+    key = hashlib.md5(f"{voice or VOICE}{RATE}{text}".encode()).hexdigest()
     return os.path.join(CACHE_DIR, f"{key}.mp3")
 
 
@@ -311,7 +311,7 @@ def _play_audio_bytes(audio_bytes):
         time.sleep(0.05)
 
 
-def speak(text, use_cache=True):
+def speak(text, use_cache=True, voice=None, display_text=None):
     global _interrupted, _paused_text
 
     text = str(text).strip()
@@ -321,13 +321,13 @@ def speak(text, use_cache=True):
     _interrupted = False
 
     try:
-        eel.DisplayMessage(text)
-        eel.receiverText(text)
+        eel.DisplayMessage(display_text or text)
+        eel.receiverText(display_text or text)
         eel.noraAvatarState("speaking")
     except:
         pass
 
-    cache_path = _get_cache_path(text)
+    cache_path = _get_cache_path(text, voice)
 
     try:
         pygame.mixer.init(frequency=24000)
@@ -338,7 +338,7 @@ def speak(text, use_cache=True):
                 audio_bytes = f.read()
         else:
             print(f"[speak] Generating audio...")
-            audio_bytes = asyncio.run(_generate_audio(text))
+            audio_bytes = asyncio.run(_generate_audio(text, voice))
             if use_cache and audio_bytes:
                 with open(cache_path, "wb") as f:
                     f.write(audio_bytes)
