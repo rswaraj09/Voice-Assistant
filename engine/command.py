@@ -511,6 +511,9 @@ def _is_file_share_request(query):
         "whatsapp", "telegram", "email", "gmail", "google drive",
         "drive", "bluetooth", "slack", "discord", "mail"
     ])
+    has_file = any(w in query for w in [
+        "file", "pdf", "docx", "xlsx", "sheet", "document", "photo", "image", "video", "attachment"
+    ])
     # Also trigger if user says "share this file" without platform (we'll ask)
     # Avoid false positives for plain text messages
     if ("message" in query or "msg" in query) and not any(w in query for w in ["file", "pdf", "docx", "xlsx", "sheet", "attach", "document"]):
