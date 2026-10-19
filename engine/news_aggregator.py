@@ -1,15 +1,3 @@
-"""
-News aggregator — fetch, summarize, save, and speak news articles.
-
-Sources:
-    - RSS feeds (default; no API key required). Configurable per-category.
-    - NewsAPI (optional). Enabled when the env var NEWS_API_KEY is present.
-
-Extractive summarization is done with a lightweight word-frequency algorithm
-so the feature works offline. Gemini is used for richer summaries if the
-LLM key is available.
-"""
-
 import json
 import os
 import re
