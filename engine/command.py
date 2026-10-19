@@ -267,11 +267,11 @@ def _download_app(app_name):
 
 
 #   SPEAK
-async def _generate_audio(text):
-    # Try different voices if one fails (helps bypass some 403 blocks)
-    voices = [VOICE, "en-US-GuyNeural", "en-US-AriaNeural", "en-GB-SoniaNeural"]
+async def _generate_audio(text, voice=None):
+    voices = [voice or VOICE, "en-US-GuyNeural", "en-US-AriaNeural", "en-GB-SoniaNeural"]
+    if voice and voice.startswith("hi-IN"):
+        voices = [voice, "hi-IN-MadhurNeural"]
     last_err = None
-    
     for v in voices:
         try:
             communicate = edge_tts.Communicate(text, voice=v)
@@ -288,8 +288,7 @@ async def _generate_audio(text):
             if "403" in str(e):
                 print(f"[speak] Voice {v} blocked (403), trying next...")
                 continue
-            break # other errors skip retry
-            
+            break
     if last_err:
         raise last_err
     return None
