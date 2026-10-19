@@ -605,6 +605,12 @@ def process_query(query):
             handleStudyMode()
             return True
 
+        # POEM / KAVITA / SHAYARI (Hinglish)
+        from engine.poem_generator import is_poem_request
+        if is_poem_request(query):
+            from engine.poem_generator import handlePoemCommand
+            return handlePoemCommand(query)
+
         #  PRIORITIZE EXPLAIN / WHAT IS — avoid hitting ML/PPT generators for simple questions
         if re.search(r'\b(explain|what is|how does|tell me about|who is|where is|define)\b', query.lower()):
             chat_with_nora(query)
